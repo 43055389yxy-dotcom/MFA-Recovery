@@ -15,6 +15,7 @@
   "dependencies": {
     "@aws-sdk/client-auto-scaling": "^3.1123.0",
     "@aws-sdk/client-ec2": "^3.1123.0",
+    "@aws-sdk/client-ec2-instance-connect": "^3.1123.0",
     "@aws-sdk/client-ssm": "^3.1123.0",
     "@aws-sdk/client-sts": "^3.1123.0",
     "@base-ui/react": "1.7.0",

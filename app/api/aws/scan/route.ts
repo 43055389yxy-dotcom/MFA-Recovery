@@ -27,7 +27,12 @@ async function instancesInRegion(region: string, credentials: ReturnType<typeof 
   do {
     const response = await client.send(
       new DescribeInstancesCommand({
-        Filters: [{ Name: 'instance-state-name', Values: ['running'] }],
+        Filters: [
+          {
+            Name: 'instance-state-name',
+            Values: ['pending', 'running', 'stopping', 'stopped'],
+          },
+        ],
         NextToken: nextToken,
         MaxResults: 1000,
       }),
@@ -46,6 +51,7 @@ async function instancesInRegion(region: string, credentials: ReturnType<typeof 
     state: instance.State?.Name || '',
     platform: instance.Platform === 'Windows' ? 'Windows' : 'Linux',
     platformDetails: instance.PlatformDetails || '',
+    architecture: instance.Architecture || '',
     availabilityZone: instance.Placement?.AvailabilityZone || '',
     publicIp: instance.PublicIpAddress || '',
     privateIp: instance.PrivateIpAddress || '',

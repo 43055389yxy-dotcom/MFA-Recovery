@@ -7,7 +7,7 @@ CR_ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
 CR_CALLER_ARN="$(aws sts get-caller-identity --query Arn --output text)"
 CR_PARTITION="$(printf '%s' "$CR_CALLER_ARN" | cut -d: -f2)"
 
-printf '\nCloudRescue AWS 授权配置\n'
+printf '\nCloudRescue 智能登录恢复授权配置\n'
 printf '账号: %s\n' "$CR_ACCOUNT_ID"
 
 CR_TRUST_POLICY="{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"ssm.amazonaws.com\"},\"Action\":\"sts:AssumeRole\",\"Condition\":{\"StringEquals\":{\"aws:SourceAccount\":\"$CR_ACCOUNT_ID\"}}}]}"
@@ -27,11 +27,54 @@ aws iam attach-role-policy \
   --role-name "$CR_ROLE_NAME" \
   --policy-arn "arn:$CR_PARTITION:iam::aws:policy/service-role/AmazonSSMAutomationRole" >/dev/null
 
-CR_ROLE_POLICY="{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"EC2RescueFunctions\",\"Effect\":\"Allow\",\"Action\":[\"lambda:CreateFunction\",\"lambda:InvokeFunction\",\"lambda:GetFunction\",\"lambda:DeleteFunction\"],\"Resource\":\"arn:$CR_PARTITION:lambda:*:$CR_ACCOUNT_ID:function:AWSSupport-EC2Rescue-*\"},{\"Sid\":\"OfficialArtifacts\",\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\",\"s3:GetObjectVersion\"],\"Resource\":[\"arn:$CR_PARTITION:s3:::awssupport-ssm.*/*.template\",\"arn:$CR_PARTITION:s3:::awssupport-ssm.*/*.zip\"]},{\"Sid\":\"TemporaryRescueIdentity\",\"Effect\":\"Allow\",\"Action\":[\"iam:CreateRole\",\"iam:CreateInstanceProfile\",\"iam:GetRole\",\"iam:GetInstanceProfile\",\"iam:PutRolePolicy\",\"iam:DeleteRolePolicy\",\"iam:AttachRolePolicy\",\"iam:DetachRolePolicy\",\"iam:PassRole\",\"iam:AddRoleToInstanceProfile\",\"iam:RemoveRoleFromInstanceProfile\",\"iam:DeleteRole\",\"iam:DeleteInstanceProfile\"],\"Resource\":[\"arn:$CR_PARTITION:iam::$CR_ACCOUNT_ID:role/AWSSupport-EC2Rescue-*\",\"arn:$CR_PARTITION:iam::$CR_ACCOUNT_ID:instance-profile/AWSSupport-EC2Rescue-*\"]},{\"Sid\":\"RescueNetwork\",\"Effect\":\"Allow\",\"Action\":[\"ec2:CreateVpc\",\"ec2:ModifyVpcAttribute\",\"ec2:DeleteVpc\",\"ec2:CreateInternetGateway\",\"ec2:AttachInternetGateway\",\"ec2:DetachInternetGateway\",\"ec2:DeleteInternetGateway\",\"ec2:CreateSubnet\",\"ec2:DeleteSubnet\",\"ec2:CreateRoute\",\"ec2:DeleteRoute\",\"ec2:CreateRouteTable\",\"ec2:AssociateRouteTable\",\"ec2:DisassociateRouteTable\",\"ec2:DeleteRouteTable\",\"ec2:CreateVpcEndpoint\",\"ec2:DeleteVpcEndpoints\",\"ec2:ModifyVpcEndpoint\",\"ec2:Describe*\"],\"Resource\":\"*\"},{\"Sid\":\"EncryptedRootVolume\",\"Effect\":\"Allow\",\"Action\":[\"kms:DescribeKey\",\"kms:CreateGrant\",\"kms:Decrypt\",\"kms:GenerateDataKeyWithoutPlaintext\",\"kms:ReEncryptFrom\",\"kms:ReEncryptTo\"],\"Resource\":\"*\"}]}"
+CR_ROLE_POLICY="$(cat <<JSON
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "EC2RescueFunctions",
+      "Effect": "Allow",
+      "Action": ["lambda:CreateFunction", "lambda:InvokeFunction", "lambda:GetFunction", "lambda:DeleteFunction"],
+      "Resource": "arn:$CR_PARTITION:lambda:*:$CR_ACCOUNT_ID:function:AWSSupport-EC2Rescue-*"
+    },
+    {
+      "Sid": "OfficialArtifacts",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:GetObjectVersion"],
+      "Resource": ["arn:$CR_PARTITION:s3:::awssupport-ssm.*/*.template", "arn:$CR_PARTITION:s3:::awssupport-ssm.*/*.zip"]
+    },
+    {
+      "Sid": "TemporaryRescueIdentity",
+      "Effect": "Allow",
+      "Action": ["iam:CreateRole", "iam:CreateInstanceProfile", "iam:GetRole", "iam:GetInstanceProfile", "iam:PutRolePolicy", "iam:DeleteRolePolicy", "iam:AttachRolePolicy", "iam:DetachRolePolicy", "iam:PassRole", "iam:AddRoleToInstanceProfile", "iam:RemoveRoleFromInstanceProfile", "iam:DeleteRole", "iam:DeleteInstanceProfile"],
+      "Resource": ["arn:$CR_PARTITION:iam::$CR_ACCOUNT_ID:role/AWSSupport-EC2Rescue-*", "arn:$CR_PARTITION:iam::$CR_ACCOUNT_ID:instance-profile/AWSSupport-EC2Rescue-*"]
+    },
+    {
+      "Sid": "RescueNetwork",
+      "Effect": "Allow",
+      "Action": ["ec2:CreateVpc", "ec2:ModifyVpcAttribute", "ec2:DeleteVpc", "ec2:CreateInternetGateway", "ec2:AttachInternetGateway", "ec2:DetachInternetGateway", "ec2:DeleteInternetGateway", "ec2:CreateSubnet", "ec2:DeleteSubnet", "ec2:CreateRoute", "ec2:DeleteRoute", "ec2:CreateRouteTable", "ec2:AssociateRouteTable", "ec2:DisassociateRouteTable", "ec2:DeleteRouteTable", "ec2:CreateVpcEndpoint", "ec2:DeleteVpcEndpoints", "ec2:ModifyVpcEndpoint", "ec2:Describe*"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "OnlineTroubleshootCommand",
+      "Effect": "Allow",
+      "Action": ["ssm:DescribeInstanceInformation", "ssm:SendCommand", "ssm:GetCommandInvocation", "ssm:ListCommands", "ssm:ListCommandInvocations"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "EncryptedRootVolume",
+      "Effect": "Allow",
+      "Action": ["kms:DescribeKey", "kms:CreateGrant", "kms:Decrypt", "kms:GenerateDataKeyWithoutPlaintext", "kms:ReEncryptFrom", "kms:ReEncryptTo"],
+      "Resource": "*"
+    }
+  ]
+}
+JSON
+)"
 
 aws iam put-role-policy \
   --role-name "$CR_ROLE_NAME" \
-  --policy-name "CloudRescueEC2RescueWorkflow" \
+  --policy-name "CloudRescueRecoveryWorkflow" \
   --policy-document "$CR_ROLE_POLICY" >/dev/null
 
 if ! aws iam get-user --user-name "$CR_USER_NAME" >/dev/null 2>&1; then
@@ -40,7 +83,65 @@ if ! aws iam get-user --user-name "$CR_USER_NAME" >/dev/null 2>&1; then
     --tags Key=ManagedBy,Value=CloudRescue >/dev/null
 fi
 
-CR_USER_POLICY="{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"DiscoverEC2\",\"Effect\":\"Allow\",\"Action\":[\"ec2:DescribeRegions\",\"ec2:DescribeInstances\",\"ec2:DescribeVolumes\",\"ec2:DescribeAddresses\",\"autoscaling:DescribeAutoScalingInstances\"],\"Resource\":\"*\"},{\"Sid\":\"StartOfficialResetAccess\",\"Effect\":\"Allow\",\"Action\":\"ssm:StartAutomationExecution\",\"Resource\":[\"arn:$CR_PARTITION:ssm:*::document/AWSSupport-ResetAccess\",\"arn:$CR_PARTITION:ssm:*::automation-definition/AWSSupport-ResetAccess:\$DEFAULT\",\"arn:$CR_PARTITION:ssm:*:$CR_ACCOUNT_ID:automation-execution/*\"]},{\"Sid\":\"MonitorRecovery\",\"Effect\":\"Allow\",\"Action\":[\"ssm:GetAutomationExecution\",\"ssm:DescribeAutomationExecutions\",\"ssm:DescribeAutomationStepExecutions\"],\"Resource\":\"arn:$CR_PARTITION:ssm:*:$CR_ACCOUNT_ID:automation-execution/*\"},{\"Sid\":\"ReadGeneratedLinuxKey\",\"Effect\":\"Allow\",\"Action\":\"ssm:GetParameter\",\"Resource\":\"arn:$CR_PARTITION:ssm:*:$CR_ACCOUNT_ID:parameter/ec2rl/openssh/*\"},{\"Sid\":\"PassOnlyCloudRescueRole\",\"Effect\":\"Allow\",\"Action\":\"iam:PassRole\",\"Resource\":\"arn:$CR_PARTITION:iam::$CR_ACCOUNT_ID:role/$CR_ROLE_NAME\",\"Condition\":{\"StringEquals\":{\"iam:PassedToService\":\"ssm.amazonaws.com\"}}}]}"
+CR_USER_POLICY="$(cat <<JSON
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DiscoverAndAssess",
+      "Effect": "Allow",
+      "Action": ["ec2:DescribeRegions", "ec2:DescribeInstances", "ec2:DescribeVolumes", "ec2:DescribeAddresses", "ec2:DescribeInstanceStatus", "ec2:DescribeInstanceTypes", "ec2:DescribeSecurityGroups", "ec2:DescribeImages", "ec2:DescribeInstanceConnectEndpoints", "autoscaling:DescribeAutoScalingInstances", "ssm:DescribeInstanceInformation"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "RunOnlineCommands",
+      "Effect": "Allow",
+      "Action": "ssm:SendCommand",
+      "Resource": ["arn:$CR_PARTITION:ssm:*::document/AWS-RunShellScript", "arn:$CR_PARTITION:ssm:*::document/AWS-RunPowerShellScript", "arn:$CR_PARTITION:ec2:*:$CR_ACCOUNT_ID:instance/*"]
+    },
+    {
+      "Sid": "MonitorOnlineCommands",
+      "Effect": "Allow",
+      "Action": "ssm:GetCommandInvocation",
+      "Resource": "*"
+    },
+    {
+      "Sid": "UseInstanceConnect",
+      "Effect": "Allow",
+      "Action": "ec2-instance-connect:SendSSHPublicKey",
+      "Resource": "arn:$CR_PARTITION:ec2:*:$CR_ACCOUNT_ID:instance/*"
+    },
+    {
+      "Sid": "StartOfficialRecoveryAutomation",
+      "Effect": "Allow",
+      "Action": ["ssm:StartAutomationExecution", "ssm:DescribeDocument"],
+      "Resource": [
+        "arn:$CR_PARTITION:ssm:*::document/AWSSupport-ResetAccess",
+        "arn:$CR_PARTITION:ssm:*::document/AWSSupport-TroubleshootSSH",
+        "arn:$CR_PARTITION:ssm:*::document/AWSSupport-TroubleshootRDP",
+        "arn:$CR_PARTITION:ssm:*::automation-definition/AWSSupport-ResetAccess:*",
+        "arn:$CR_PARTITION:ssm:*::automation-definition/AWSSupport-TroubleshootSSH:*",
+        "arn:$CR_PARTITION:ssm:*::automation-definition/AWSSupport-TroubleshootRDP:*",
+        "arn:$CR_PARTITION:ssm:*:$CR_ACCOUNT_ID:automation-execution/*"
+      ]
+    },
+    {
+      "Sid": "MonitorRecovery",
+      "Effect": "Allow",
+      "Action": ["ssm:GetAutomationExecution", "ssm:DescribeAutomationExecutions", "ssm:DescribeAutomationStepExecutions"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "PassOnlyCloudRescueRole",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:$CR_PARTITION:iam::$CR_ACCOUNT_ID:role/$CR_ROLE_NAME",
+      "Condition": {"StringEquals": {"iam:PassedToService": "ssm.amazonaws.com"}}
+    }
+  ]
+}
+JSON
+)"
 
 aws iam put-user-policy \
   --user-name "$CR_USER_NAME" \

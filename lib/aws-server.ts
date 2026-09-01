@@ -16,6 +16,19 @@ export const targetSchema = credentialsSchema.extend({
   instanceId: z.string().regex(/^i-[a-f0-9]{8,17}$/),
 });
 
+export const sshPublicKeySchema = z
+  .string()
+  .trim()
+  .min(32)
+  .max(16_384)
+  .regex(
+    /^(?:ssh-rsa|ssh-ed25519|ecdsa-sha2-nistp(?:256|384|521)|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com)\s+[A-Za-z0-9+/]+={0,3}(?:\s+[^\r\n]{1,512})?$/,
+  );
+
+export const recoveryTargetSchema = targetSchema.extend({
+  sshPublicKey: sshPublicKeySchema.optional(),
+});
+
 export function toCredentials(input: z.infer<typeof credentialsSchema>): AwsCredentialIdentity {
   return {
     accessKeyId: input.accessKeyId,
@@ -38,12 +51,24 @@ export function publicError(error: unknown) {
 
   const candidate = error as { name?: string; message?: string; $metadata?: { httpStatusCode?: number } };
   const status = candidate.$metadata?.httpStatusCode;
-  if (status === 401 || status === 403 || candidate.name === 'UnrecognizedClientException') {
-    return { status: 401, code: 'INVALID_CREDENTIALS', message: 'AK/SK 无效或权限不足。' };
-  }
-
   if (candidate.name === 'AccessDeniedException' || candidate.name === 'UnauthorizedOperation') {
     return { status: 403, code: 'ACCESS_DENIED', message: '当前专用凭证缺少所需权限。' };
+  }
+
+  if (status === 401 || candidate.name === 'UnrecognizedClientException') {
+    return { status: 401, code: 'INVALID_CREDENTIALS', message: 'AK/SK 无效。' };
+  }
+
+  if (status === 403) {
+    return { status: 403, code: 'ACCESS_DENIED', message: '当前专用凭证缺少所需权限。' };
+  }
+
+  if (candidate.name === 'InvalidInstanceId') {
+    return {
+      status: 400,
+      code: 'INSTANCE_NOT_MANAGED',
+      message: '该实例当前无法通过 Systems Manager 接收命令。',
+    };
   }
 
   return {

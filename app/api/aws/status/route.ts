@@ -13,7 +13,7 @@ export const dynamic = 'force-dynamic';
 
 const statusSchema = credentialsSchema.extend({
   region: z.string().regex(/^[a-z]{2}(?:-gov)?-[a-z]+-\d$/),
-  executionId: z.string().uuid(),
+  executionId: z.uuid(),
 });
 
 const labels: Record<string, string> = {
@@ -47,6 +47,12 @@ const labels: Record<string, string> = {
   attachRootVolumeBackToSourceInstance: '把根 EBS 挂回目标实例',
   restoreSourceInstanceState: '恢复目标实例运行状态',
   deleteEC2RescueStack: '清理临时救援资源',
+  checkInstanceIsManaged: '检查 SSM 托管状态',
+  assertInstanceIsManaged: '确认实例可在线管理',
+  troubleshootSSH: '检查并修复 SSH 配置',
+  troubleshootRDP: '检查并修复 RDP 配置',
+  manageRDPSettings: '修复 RDP 服务与远程连接设置',
+  manageFirewallProfiles: '检查 Windows Firewall',
 };
 
 function fallbackLabel(name: string) {
@@ -165,6 +171,7 @@ export async function POST(request: Request) {
       ok: true,
       execution: {
         id: execution?.AutomationExecutionId || input.executionId,
+        documentName: execution?.DocumentName || '',
         status: execution?.AutomationExecutionStatus || 'Pending',
         statusMessage: cleanMessage(execution?.FailureMessage),
         currentStepName: execution?.CurrentStepName || '',
@@ -180,6 +187,12 @@ export async function POST(request: Request) {
           windowsBackupAmi: outputs['getWindowsBackupAmi.ImageId']?.[0] || '',
           windowsPasswordEnabledAmi:
             outputs['getWindowsPasswordEnabledAmi.ImageId']?.[0] || '',
+          ec2RescueResult:
+            outputs['getEC2RescueForLinuxResult.Output']?.[0] ||
+            outputs['getEC2RescueForWindowsResult.Output']?.[0] ||
+            outputs['troubleshootSSH.Output']?.[0] ||
+            outputs['manageRDPSettings.Output']?.[0] ||
+            '',
         },
       },
     });
