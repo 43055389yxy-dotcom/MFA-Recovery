@@ -11,10 +11,10 @@ mfa-recovery.tontiancloud.com {
     redir / /mfa-recovery 302
 
     handle /api/aws/mfa/* {
-        reverse_proxy mfa-recovery-api:3198
+        reverse_proxy mfa-recovery:3198
     }
 
     handle {
-        reverse_proxy mfa-recovery-web:3000
+        reverse_proxy mfa-recovery:3000
     }
 }

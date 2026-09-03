@@ -9,17 +9,7 @@ FROM dependencies AS build
 COPY . .
 RUN npm run build
 
-FROM node:22-bookworm-slim AS web
-
-ENV NODE_ENV=production
-WORKDIR /app
-COPY --from=build /app ./
-EXPOSE 3000
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD ["node", "-e", "fetch('http://127.0.0.1:3000/mfa-recovery').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
-CMD ["npm", "run", "start", "--", "--hostname", "0.0.0.0", "--port", "3000"]
-
-FROM node:22-bookworm-slim AS api
+FROM node:22-bookworm-slim AS app
 
 ENV NODE_ENV=production
 WORKDIR /app
@@ -31,8 +21,8 @@ RUN apt-get update \
   && unzip -q /tmp/awscliv2.zip -d /tmp \
   && /tmp/aws/install \
   && rm -rf /var/lib/apt/lists/* /tmp/aws /tmp/awscliv2.zip
-COPY scripts ./scripts
-EXPOSE 3198
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD ["node", "-e", "fetch('http://127.0.0.1:3198/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
-CMD ["node", "scripts/mfa-local-api.mjs"]
+COPY --from=build /app ./
+EXPOSE 3000 3198
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD ["node", "-e", "Promise.all([fetch('http://127.0.0.1:3000/mfa-recovery'),fetch('http://127.0.0.1:3198/healthz')]).then(rs=>process.exit(rs.every(r=>r.ok)?0:1)).catch(()=>process.exit(1))"]
+CMD ["node", "scripts/start-production.mjs"]

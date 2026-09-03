@@ -1,9 +1,6 @@
 # MFA Recovery deployment
 
-The application runs as two containers on the existing `caddy-net` network:
-
-- `mfa-recovery-web`: Vinext production server
-- `mfa-recovery-api`: AWS CLI service and encrypted DynamoDB storage access
+The application runs as one `mfa-recovery` container on the existing `caddy-net` network. The container serves the Vinext application on port 3000 and the AWS API service on port 3198.
 
 Copy `.env.production.example` to `.env.production`, provide the storage service credentials, then run:
 

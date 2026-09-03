@@ -1,23 +1,10 @@
 services:
-  mfa-recovery-web:
+  mfa-recovery:
     build:
       context: .
-      target: web
-    image: mfa-recovery-web:latest
-    container_name: mfa-recovery-web
-    restart: unless-stopped
-    expose:
-      - "3000"
-    networks:
-      - mfa-recovery-internal
-      - caddy-net
-
-  mfa-recovery-api:
-    build:
-      context: .
-      target: api
-    image: mfa-recovery-api:latest
-    container_name: mfa-recovery-api
+      target: app
+    image: mfa-recovery:latest
+    container_name: mfa-recovery
     restart: unless-stopped
     env_file:
       - .env.production
@@ -26,13 +13,11 @@ services:
       MFA_API_PORT: 3198
       AWS_CLI_PATH: /usr/local/bin/aws
     expose:
+      - "3000"
       - "3198"
     networks:
-      - mfa-recovery-internal
       - caddy-net
 
 networks:
-  mfa-recovery-internal:
-    name: mfa-recovery-internal
   caddy-net:
     external: true
