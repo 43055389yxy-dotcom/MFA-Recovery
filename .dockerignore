@@ -1,0 +1,8 @@
+.git
+.gitignore
+.openai
+.vinext
+node_modules
+tmp
+.env*
+npm-debug.log*

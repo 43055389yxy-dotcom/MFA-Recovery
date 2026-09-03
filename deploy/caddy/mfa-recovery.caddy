@@ -1,0 +1,20 @@
+mfa-recovery.tontiancloud.com {
+    import tool_auth mfa_converter
+    encode zstd gzip
+
+    header {
+        X-Content-Type-Options nosniff
+        Referrer-Policy strict-origin-when-cross-origin
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    }
+
+    redir / /mfa-recovery 302
+
+    handle /api/aws/mfa/* {
+        reverse_proxy mfa-recovery-api:3198
+    }
+
+    handle {
+        reverse_proxy mfa-recovery-web:3000
+    }
+}

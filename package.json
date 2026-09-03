@@ -7,8 +7,9 @@
   },
   "scripts": {
     "dev": "vinext dev",
+    "mfa-api": "node scripts/mfa-local-api.mjs",
     "build": "vinext build",
-    "start": "wrangler dev --config dist/server/wrangler.json",
+    "start": "vinext start",
     "lint": "oxlint",
     "format": "oxfmt"
   },

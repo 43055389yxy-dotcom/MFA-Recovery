@@ -28,6 +28,7 @@ yarn-error.log*
 
 # local environment
 .env*
+!.env.production.example
 
 # deployment and generated files
 .vercel
@@ -37,3 +38,7 @@ next-env.d.ts
 /.wrangler/
 /outputs/
 /work/
+/tmp/
+
+# self-hosted deployment
+.env.production
