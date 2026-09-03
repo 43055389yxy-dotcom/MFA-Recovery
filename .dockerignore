@@ -1,6 +1,5 @@
 .git
 .gitignore
-.openai
 .vinext
 node_modules
 tmp
