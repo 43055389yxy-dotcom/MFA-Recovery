@@ -30,14 +30,21 @@ function validateCredentialsInput(input) {
 }
 
 function awsEnvironment(input) {
-  return {
+  const environment = {
     ...process.env,
-    AWS_ACCESS_KEY_ID: input.accessKeyId,
-    AWS_SECRET_ACCESS_KEY: input.secretAccessKey,
-    ...(input.sessionToken ? { AWS_SESSION_TOKEN: input.sessionToken } : {}),
     AWS_PAGER: '',
     AWS_DEFAULT_REGION: input.region || 'us-east-1',
   };
+  if (input.accessKeyId && input.secretAccessKey) {
+    environment.AWS_ACCESS_KEY_ID = input.accessKeyId;
+    environment.AWS_SECRET_ACCESS_KEY = input.secretAccessKey;
+    if (input.sessionToken) environment.AWS_SESSION_TOKEN = input.sessionToken;
+  } else {
+    delete environment.AWS_ACCESS_KEY_ID;
+    delete environment.AWS_SECRET_ACCESS_KEY;
+    delete environment.AWS_SESSION_TOKEN;
+  }
+  return environment;
 }
 
 function temporaryInput(source, credentials) {
@@ -149,7 +156,25 @@ async function storageConfig() {
     kmsKeyId: process.env.MFA_STORAGE_KMS_KEY_ID || '',
     partitionKey: process.env.MFA_STORAGE_PARTITION_KEY || '',
   };
-  if (Object.values(environmentConfig).every(Boolean)) {
+  const storageLocationConfigured = [
+    environmentConfig.region,
+    environmentConfig.tableName,
+    environmentConfig.kmsKeyId,
+    environmentConfig.partitionKey,
+  ].every(Boolean);
+  const staticCredentialsConfigured = Boolean(
+    environmentConfig.accessKeyId && environmentConfig.secretAccessKey,
+  );
+  const partialStaticCredentials = Boolean(
+    environmentConfig.accessKeyId || environmentConfig.secretAccessKey,
+  );
+  if (partialStaticCredentials && !staticCredentialsConfigured) {
+    throw new Error('服务端存储凭证不完整。');
+  }
+  if (
+    storageLocationConfigured &&
+    (staticCredentialsConfigured || process.platform !== 'darwin')
+  ) {
     cachedStorageConfig = environmentConfig;
     return cachedStorageConfig;
   }
