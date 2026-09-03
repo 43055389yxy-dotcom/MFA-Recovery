@@ -57,11 +57,17 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import {
+  InputOTP,
+  InputOTPGroup,
+  InputOTPSlot,
+} from '@/components/ui/input-otp';
+import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
 import { Progress } from '@/components/ui/progress';
+import { Switch } from '@/components/ui/switch';
 
 type FormState = {
   accessKeyId: string;
@@ -123,8 +129,12 @@ type ApiResult = Partial<RootStatus> & {
   preflight?: Preflight;
   changes?: string[];
   status?: RootStatus;
+  emailStatus?: string;
+  primaryEmail?: string;
   error?: { message?: string };
 };
+
+type EmailUpdateState = 'idle' | 'code-sent' | 'completed';
 
 const stages = [
   { label: '连接账号', detail: '验证主账号' },
@@ -143,6 +153,7 @@ const createPayerOperatorCommand = [
   '  [ "$KEY_ID" = "None" ] || aws iam delete-access-key --user-name "$USER_NAME" --access-key-id "$KEY_ID"',
   'done',
   'aws iam attach-user-policy --user-name "$USER_NAME" --policy-arn "$POLICY_ARN"',
+  'aws organizations enable-aws-service-access --service-principal account.amazonaws.com',
   'aws iam create-access-key --user-name "$USER_NAME" --output json',
   '',
   '',
@@ -279,6 +290,11 @@ export default function MfaRecoveryPage() {
   const [recoveryAllowed, setRecoveryAllowed] = useState(false);
   const [rootHelpOpen, setRootHelpOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [emailChangeEnabled, setEmailChangeEnabled] = useState(false);
+  const [newRootEmail, setNewRootEmail] = useState('');
+  const [emailOtp, setEmailOtp] = useState('');
+  const [emailUpdateState, setEmailUpdateState] =
+    useState<EmailUpdateState>('idle');
 
   const canSavePayer = useMemo(
     () =>
@@ -290,10 +306,14 @@ export default function MfaRecoveryPage() {
   const selectedProfile = profiles.find(
     (profile) => profile.id === selectedProfileId,
   );
+  const validRootEmail =
+    newRootEmail.trim().length <= 64 &&
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newRootEmail.trim());
   const canUseSaved = Boolean(
     selectedProfileId &&
     selectedProfile?.credentialStatus === 'ready' &&
-    /^\d{12}$/.test(form.accountId.trim()),
+    /^\d{12}$/.test(form.accountId.trim()) &&
+    (!emailChangeEnabled || validRootEmail),
   );
   const editingProfile = profiles.find(
     (profile) => profile.id === editingProfileId,
@@ -363,6 +383,13 @@ export default function MfaRecoveryPage() {
     setNotice('');
   }
 
+  function resetEmailChange() {
+    setEmailChangeEnabled(false);
+    setNewRootEmail('');
+    setEmailOtp('');
+    setEmailUpdateState('idle');
+  }
+
   async function runAction(path: string, body: unknown = requestBody) {
     setBusy(true);
     resetMessages();
@@ -378,6 +405,7 @@ export default function MfaRecoveryPage() {
 
   function selectProfile(profile: PayerProfile) {
     resetMessages();
+    resetEmailChange();
     setAddingPayer(false);
     setSelectedProfileId(profile.id);
     setPermissionCommand('');
@@ -632,7 +660,9 @@ export default function MfaRecoveryPage() {
       result.preflight.rootAccess.rootCredentialsManagementEnabled;
     if (ready) {
       setNotice('账号验证通过。');
-      await scanRootCredentials(connectionBody);
+      if (!emailChangeEnabled) {
+        await scanRootCredentials(connectionBody);
+      }
     } else {
       setRootHelpOpen(true);
     }
@@ -649,7 +679,9 @@ export default function MfaRecoveryPage() {
     if (ready) {
       setRootHelpOpen(false);
       setNotice('集中式根访问已启用。');
-      await scanRootCredentials();
+      if (!emailChangeEnabled) {
+        await scanRootCredentials();
+      }
     } else {
       setRootHelpOpen(true);
       setError('仍未检测到完整的集中式根访问设置。');
@@ -681,6 +713,29 @@ export default function MfaRecoveryPage() {
     setCurrentStage(3);
     setNotice('未发现根凭证。');
     await allowRecovery(body, '未发现根凭证');
+  }
+
+  async function sendEmailCode() {
+    const result = await runAction('/api/aws/mfa/email/start', {
+      ...requestBody,
+      primaryEmail: newRootEmail.trim(),
+    });
+    if (!result) return;
+    setEmailOtp('');
+    setEmailUpdateState('code-sent');
+    setNotice('验证码已发送。');
+  }
+
+  async function confirmEmailUpdate() {
+    const result = await runAction('/api/aws/mfa/email/accept', {
+      ...requestBody,
+      primaryEmail: newRootEmail.trim(),
+      otp: emailOtp.trim(),
+    });
+    if (!result) return;
+    setEmailUpdateState('completed');
+    setNotice('根邮箱已更新。');
+    await scanRootCredentials();
   }
 
   async function deleteCredentials() {
@@ -736,6 +791,7 @@ export default function MfaRecoveryPage() {
 
   function resetFlow() {
     resetMessages();
+    resetEmailChange();
     setForm((current) => ({
       ...current,
       accountId: '',
@@ -1008,19 +1064,65 @@ export default function MfaRecoveryPage() {
                               <Input
                                 id="target-account-id"
                                 value={form.accountId}
-                                onChange={(event) =>
+                                onChange={(event) => {
+                                  setEmailOtp('');
+                                  setEmailUpdateState('idle');
                                   updateField(
                                     'accountId',
                                     event.target.value
                                       .replace(/\D/g, '')
                                       .slice(0, 12),
-                                  )
-                                }
+                                  );
+                                }}
                                 placeholder="输入 12 位成员账号 ID"
                                 inputMode="numeric"
                                 autoComplete="off"
                                 className="h-16 rounded-xl border-slate-200 bg-white pl-10 pr-3.5 font-mono text-base tracking-[0.1em] shadow-sm transition-all hover:border-slate-300 focus-visible:shadow-md"
                               />
+                            </div>
+                            <div className="mt-4 border-t border-slate-200 pt-4">
+                              <div className="flex items-center justify-between gap-4">
+                                <div className="flex items-center gap-2.5">
+                                  <MailCheck className="size-4 text-slate-500" />
+                                  <label
+                                    htmlFor="change-root-email"
+                                    className="text-sm font-medium text-slate-800"
+                                  >
+                                    更换根邮箱
+                                  </label>
+                                  <Badge variant="outline" className="text-[10px]">
+                                    可选
+                                  </Badge>
+                                </div>
+                                <Switch
+                                  id="change-root-email"
+                                  checked={emailChangeEnabled}
+                                  onCheckedChange={(checked) => {
+                                    setEmailChangeEnabled(checked);
+                                    setEmailOtp('');
+                                    setEmailUpdateState('idle');
+                                    if (!checked) setNewRootEmail('');
+                                  }}
+                                />
+                              </div>
+                              {emailChangeEnabled ? (
+                                <div className="relative mt-3 animate-in fade-in slide-in-from-top-1 duration-200">
+                                  <MailCheck className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+                                  <Input
+                                    value={newRootEmail}
+                                    onChange={(event) => {
+                                      setNewRootEmail(event.target.value.slice(0, 64));
+                                      setEmailOtp('');
+                                      setEmailUpdateState('idle');
+                                    }}
+                                    type="email"
+                                    placeholder="新根邮箱"
+                                    autoComplete="off"
+                                    spellCheck={false}
+                                    className="h-11 rounded-xl bg-white pl-10 shadow-sm"
+                                  />
+                                </div>
+                              ) : null}
                             </div>
                           </section>
                         </div>
@@ -1114,22 +1216,115 @@ export default function MfaRecoveryPage() {
                 passed={preflight.rootAccess.rootSessionsEnabled}
               />
               {rootReady ? (
-                <div className="mt-4 flex items-center gap-3 rounded-2xl border border-primary/15 bg-primary/5 p-4 animate-in fade-in duration-300">
-                  <span className="flex size-10 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-                    <LoaderCircle className="size-5 animate-spin" />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="font-medium">正在扫描根凭证</p>
+                emailChangeEnabled ? (
+                  <section className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm animate-in fade-in slide-in-from-bottom-2 duration-300">
+                    <div className="flex items-center gap-3 border-b border-slate-200 bg-slate-50/80 px-4 py-3.5">
+                      <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-amber-300">
+                        <MailCheck className="size-4.5" />
+                      </span>
+                      <div className="min-w-0">
+                        <p className="font-semibold text-slate-950">
+                          更换根邮箱
+                        </p>
+                        <p className="truncate text-xs text-slate-500">
+                          {newRootEmail}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="p-4 sm:p-5">
+                      {emailUpdateState === 'idle' ? (
+                        <PageActions
+                          back={goBack}
+                          primaryLabel="发送验证码"
+                          onPrimary={sendEmailCode}
+                          disabled={!validRootEmail}
+                          busy={busy}
+                          primaryIcon={<MailCheck />}
+                        />
+                      ) : null}
+
+                      {emailUpdateState === 'code-sent' ? (
+                        <div className="animate-in fade-in duration-200">
+                          <label
+                            htmlFor="root-email-otp"
+                            className="mb-3 block text-sm font-medium text-slate-800"
+                          >
+                            邮箱验证码
+                          </label>
+                          <InputOTP
+                            id="root-email-otp"
+                            maxLength={6}
+                            value={emailOtp}
+                            onChange={(value) =>
+                              setEmailOtp(value.replace(/[^A-Za-z0-9]/g, ''))
+                            }
+                            onComplete={() => {
+                              if (!busy) void confirmEmailUpdate();
+                            }}
+                            containerClassName="w-full"
+                          >
+                            <InputOTPGroup className="grid w-full grid-cols-6 gap-2">
+                              {Array.from({ length: 6 }, (_, index) => (
+                                <InputOTPSlot
+                                  key={index}
+                                  index={index}
+                                  className="h-12 w-full rounded-xl border bg-slate-50 font-mono text-lg uppercase first:rounded-xl first:border last:rounded-xl"
+                                />
+                              ))}
+                            </InputOTPGroup>
+                          </InputOTP>
+                          <div className="mt-5 flex items-center justify-between gap-3 border-t pt-4">
+                            <Button
+                              variant="ghost"
+                              onClick={sendEmailCode}
+                              disabled={busy}
+                            >
+                              <RefreshCw /> 重新发送
+                            </Button>
+                            <Button
+                              onClick={confirmEmailUpdate}
+                              disabled={emailOtp.length !== 6 || busy}
+                              className="h-10 min-w-36"
+                            >
+                              {busy ? (
+                                <LoaderCircle className="animate-spin" />
+                              ) : (
+                                <Check />
+                              )}
+                              {busy ? '正在验证…' : '确认更换'}
+                            </Button>
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {emailUpdateState === 'completed' ? (
+                        <StatusRow
+                          label="根邮箱"
+                          detail={newRootEmail}
+                          passed
+                        />
+                      ) : null}
+                    </div>
+                  </section>
+                ) : (
+                  <div className="mt-4 flex items-center gap-3 rounded-2xl border border-primary/15 bg-primary/5 p-4 animate-in fade-in duration-300">
+                    <span className="flex size-10 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+                      <LoaderCircle className="size-5 animate-spin" />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium">正在扫描根凭证</p>
+                    </div>
+                    {!busy && error ? (
+                      <Button
+                        variant="outline"
+                        onClick={() => scanRootCredentials()}
+                      >
+                        <RefreshCw /> 重试
+                      </Button>
+                    ) : null}
                   </div>
-                  {!busy && error ? (
-                    <Button
-                      variant="outline"
-                      onClick={() => scanRootCredentials()}
-                    >
-                      <RefreshCw /> 重试
-                    </Button>
-                  ) : null}
-                </div>
+                )
               ) : (
                 <PageActions
                   back={goBack}
