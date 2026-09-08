@@ -688,6 +688,30 @@ export default function MfaRecoveryPage() {
     }
   }
 
+  async function enableRootAccess() {
+    const result = await runAction('/api/aws/mfa/root/enable');
+    if (!result?.preflight) return;
+    setPreflight(result.preflight);
+    const ready =
+      result.preflight.rootAccess.trustedAccessEnabled &&
+      result.preflight.rootAccess.rootSessionsEnabled &&
+      result.preflight.rootAccess.rootCredentialsManagementEnabled;
+    if (!ready) {
+      setRootHelpOpen(true);
+      setError('自动启用后仍未检测到完整的集中式根访问设置。');
+      return;
+    }
+    setRootHelpOpen(false);
+    setNotice(
+      result.changes?.length
+        ? `${result.changes.join('、')}。`
+        : '集中式根访问已经处于启用状态。',
+    );
+    if (!emailChangeEnabled) {
+      await scanRootCredentials();
+    }
+  }
+
   async function scanRootCredentials(body: unknown = requestBody) {
     const result = await runAction('/api/aws/mfa/root/status', body);
     if (!result) return;
@@ -1731,17 +1755,30 @@ export default function MfaRecoveryPage() {
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle className="text-xl">启用集中式根访问</DialogTitle>
-            <DialogDescription>AWS 主账号控制台</DialogDescription>
+            <DialogDescription>
+              使用当前管理账号凭证为整个 AWS Organization 启用所需能力。
+            </DialogDescription>
           </DialogHeader>
-          <ol className="space-y-3 text-sm">
-            <li>1. 打开 IAM → 根访问权限管理。</li>
-            <li>2. 点击“启用”。</li>
-            <li>3. 同时开启“根凭证管理”和“成员账号特权根操作”。</li>
-          </ol>
+          <div className="space-y-3 text-sm">
+            <p>程序将自动补齐以下未启用的组织级设置：</p>
+            <ul className="list-disc space-y-2 pl-5 text-muted-foreground">
+              <li>IAM Organizations 可信访问</li>
+              <li>根凭证管理</li>
+              <li>成员账号特权根操作</li>
+            </ul>
+          </div>
           <DialogFooter>
-            <Button onClick={refreshRootAccess} disabled={busy}>
-              {busy ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}
-              重新检测
+            <Button
+              variant="outline"
+              onClick={refreshRootAccess}
+              disabled={busy}
+            >
+              <RefreshCw />
+              仅重新检测
+            </Button>
+            <Button onClick={enableRootAccess} disabled={busy}>
+              {busy ? <LoaderCircle className="animate-spin" /> : <ShieldCheck />}
+              {busy ? '正在启用…' : '自动启用并继续'}
             </Button>
           </DialogFooter>
         </DialogContent>

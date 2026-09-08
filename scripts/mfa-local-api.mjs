@@ -612,6 +612,39 @@ async function preflight(input) {
   };
 }
 
+async function enableCentralizedRootAccess(input) {
+  const current = await preflight(input);
+  const changes = [];
+
+  if (!current.rootAccess.trustedAccessEnabled) {
+    await aws(input, [
+      'organizations',
+      'enable-aws-service-access',
+      '--service-principal',
+      'iam.amazonaws.com',
+    ]);
+    changes.push('已启用 IAM Organizations 可信访问');
+  }
+
+  if (!current.rootAccess.rootCredentialsManagementEnabled) {
+    await aws(input, [
+      'iam',
+      'enable-organizations-root-credentials-management',
+    ]);
+    changes.push('已启用根凭证管理');
+  }
+
+  if (!current.rootAccess.rootSessionsEnabled) {
+    await aws(input, ['iam', 'enable-organizations-root-sessions']);
+    changes.push('已启用成员账号特权根操作');
+  }
+
+  return {
+    changes,
+    preflight: await preflight(input),
+  };
+}
+
 function shellQuote(value) {
   return `'${String(value).replaceAll("'", `'"'"'`)}'`;
 }
@@ -1091,6 +1124,9 @@ const server = createServer(async (request, response) => {
         break;
       case '/api/aws/mfa/preflight':
         result = { preflight: await preflight(input) };
+        break;
+      case '/api/aws/mfa/root/enable':
+        result = await enableCentralizedRootAccess(input);
         break;
       case '/api/aws/mfa/root/status':
         result = await auditRootCredentials(input);
