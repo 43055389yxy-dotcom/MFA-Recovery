@@ -7,6 +7,7 @@ import {
   Building2,
   Check,
   CheckCircle2,
+  ChevronDown,
   Circle,
   Copy,
   KeyRound,
@@ -44,6 +45,11 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
 import {
   Dialog,
   DialogContent,
@@ -235,6 +241,7 @@ export default function MfaRecoveryPage() {
   const [currentStage, setCurrentStage] = useState(0);
   const [profiles, setProfiles] = useState<PayerProfile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState('');
+  const [accountsExpanded, setAccountsExpanded] = useState(false);
   const [addingPayer, setAddingPayer] = useState(false);
   const [profilesLoading, setProfilesLoading] = useState(true);
   const [permissionCommand, setPermissionCommand] = useState('');
@@ -358,6 +365,7 @@ export default function MfaRecoveryPage() {
     resetMessages();
     setAddingPayer(false);
     setSelectedProfileId(profile.id);
+    setAccountsExpanded(false);
     setPermissionCommand('');
     setCommandCopied(false);
     setNewPayerLabel('');
@@ -828,95 +836,161 @@ export default function MfaRecoveryPage() {
                     {selectedProfile ? (
                       <div className="animate-in fade-in duration-200">
                         <div className="space-y-4">
-                          <section className="relative rounded-2xl border border-slate-200 bg-slate-50/55 p-4 sm:p-5">
-                            <span className="absolute right-4 top-4 font-mono text-[10px] font-semibold tracking-[0.16em] text-slate-300">
-                              01
-                            </span>
-                            <div className="mb-4 flex items-center gap-3">
-                              <span className="flex size-8 items-center justify-center rounded-lg bg-white text-slate-700 shadow-sm ring-1 ring-slate-200">
-                                <KeyRound className="size-4" />
+                          <Collapsible
+                            open={accountsExpanded}
+                            onOpenChange={setAccountsExpanded}
+                          >
+                            <section className="relative rounded-2xl border border-slate-200 bg-slate-50/55 p-4 sm:p-5">
+                              <span className="absolute right-4 top-4 font-mono text-[10px] font-semibold tracking-[0.16em] text-slate-300">
+                                01
                               </span>
-                              <div className="flex min-w-0 flex-1 items-center justify-between gap-3 pr-9">
-                                <p className="text-sm font-semibold text-slate-900">
-                                  执行账号
-                                </p>
-                                <Badge variant="outline">
-                                  {displayedProfiles.length} 个可用账号
-                                </Badge>
-                              </div>
-                            </div>
-                            <div
-                              id="payer-profile"
-                              className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
-                            >
-                              {displayedProfiles.map((profile) => {
-                                const selected =
-                                  profile.id === selectedProfileId;
-                                return (
-                                  <div
-                                    key={profile.id}
-                                    className={`group relative min-w-0 overflow-hidden rounded-xl border bg-white transition-all ${
-                                      selected
-                                        ? 'border-primary/45 bg-primary/5 shadow-sm ring-2 ring-primary/10'
-                                        : 'border-slate-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-sm'
-                                    }`}
-                                  >
-                                    <button
-                                      type="button"
-                                      aria-pressed={selected}
-                                      aria-label={`选择执行账号 ${profile.label} ${profile.accountId}`}
-                                      onClick={() => selectProfile(profile)}
-                                      className="flex min-h-20 w-full min-w-0 items-center gap-3 px-3 py-3 pr-20 text-left outline-none focus-visible:ring-3 focus-visible:ring-inset focus-visible:ring-ring/35"
+                              <div className="flex items-center gap-3">
+                                <span className="flex size-8 items-center justify-center rounded-lg bg-white text-slate-700 shadow-sm ring-1 ring-slate-200">
+                                  <KeyRound className="size-4" />
+                                </span>
+                                <div className="flex min-w-0 flex-1 items-center justify-between gap-3 pr-9">
+                                  <p className="text-sm font-semibold text-slate-900">
+                                    执行账号
+                                  </p>
+                                  <div className="flex items-center gap-2">
+                                    <Badge
+                                      variant="outline"
+                                      className="hidden sm:inline-flex"
                                     >
-                                      <span
-                                        className={`size-2.5 shrink-0 rounded-full ring-4 ${
-                                          profile.credentialStatus === 'ready'
-                                            ? 'bg-emerald-500 ring-emerald-500/10'
-                                            : 'bg-amber-500 ring-amber-500/10'
+                                      {displayedProfiles.length} 个可用账号
+                                    </Badge>
+                                    <CollapsibleTrigger className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/35">
+                                      {accountsExpanded ? '收起' : '切换账号'}
+                                      <ChevronDown
+                                        className={`size-3.5 transition-transform duration-200 ${
+                                          accountsExpanded ? 'rotate-180' : ''
                                         }`}
                                       />
-                                      <span className="flex min-w-0 flex-1 flex-col">
-                                        <span className="truncate font-semibold text-slate-900">
-                                          {profile.label}
-                                        </span>
-                                        <span className="font-mono text-[11px] text-slate-500">
-                                          {profile.accountId}
-                                        </span>
-                                      </span>
-                                    </button>
-                                    <div className="absolute right-2 top-2 flex items-center gap-0.5">
-                                      {selected ? (
-                                        <span
-                                          className="flex size-7 items-center justify-center text-primary"
-                                          aria-label="当前选中"
-                                        >
-                                          <Check className="size-4" />
-                                        </span>
-                                      ) : null}
-                                      <button
-                                        type="button"
-                                        onClick={() => openLabelEditor(profile)}
-                                        className="flex size-7 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-white hover:text-primary hover:shadow-sm"
-                                        aria-label={`编辑 ${profile.label} 的备注`}
-                                      >
-                                        <Pencil className="size-3.5" />
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          openProfileDelete(profile)
-                                        }
-                                        className="flex size-7 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600"
-                                        aria-label={`删除 ${profile.label}`}
-                                      >
-                                        <Trash2 className="size-3.5" />
-                                      </button>
-                                    </div>
+                                    </CollapsibleTrigger>
                                   </div>
-                                );
-                              })}
-                            </div>
-                          </section>
+                                </div>
+                              </div>
+                              {!accountsExpanded ? (
+                                <div className="mt-4 flex min-h-16 items-center gap-3 rounded-xl border border-primary/35 bg-white px-3.5 py-3 shadow-sm ring-2 ring-primary/8">
+                                  <span
+                                    className={`size-2.5 shrink-0 rounded-full ring-4 ${
+                                      selectedProfile.credentialStatus ===
+                                      'ready'
+                                        ? 'bg-emerald-500 ring-emerald-500/10'
+                                        : 'bg-amber-500 ring-amber-500/10'
+                                    }`}
+                                  />
+                                  <div className="flex min-w-0 flex-1 flex-col">
+                                    <span className="truncate font-semibold text-slate-900">
+                                      {selectedProfile.label}
+                                    </span>
+                                    <span className="font-mono text-[11px] text-slate-500">
+                                      {selectedProfile.accountId}
+                                    </span>
+                                  </div>
+                                  <span className="hidden text-xs text-primary sm:inline">
+                                    当前选中
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      openLabelEditor(selectedProfile)
+                                    }
+                                    className="flex size-8 shrink-0 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-50 hover:text-primary"
+                                    aria-label={`编辑 ${selectedProfile.label} 的备注`}
+                                  >
+                                    <Pencil className="size-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      openProfileDelete(selectedProfile)
+                                    }
+                                    className="flex size-8 shrink-0 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600"
+                                    aria-label={`删除 ${selectedProfile.label}`}
+                                  >
+                                    <Trash2 className="size-3.5" />
+                                  </button>
+                                </div>
+                              ) : null}
+                              <CollapsibleContent className="mt-4 border-t border-slate-200 pt-4">
+                                <div
+                                  id="payer-profile"
+                                  className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+                                >
+                                  {displayedProfiles.map((profile) => {
+                                    const selected =
+                                      profile.id === selectedProfileId;
+                                    return (
+                                      <div
+                                        key={profile.id}
+                                        className={`group relative min-w-0 overflow-hidden rounded-xl border bg-white transition-all ${
+                                          selected
+                                            ? 'border-primary/45 bg-primary/5 shadow-sm ring-2 ring-primary/10'
+                                            : 'border-slate-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-sm'
+                                        }`}
+                                      >
+                                        <button
+                                          type="button"
+                                          aria-pressed={selected}
+                                          aria-label={`选择执行账号 ${profile.label} ${profile.accountId}`}
+                                          onClick={() => selectProfile(profile)}
+                                          className="flex min-h-20 w-full min-w-0 items-center gap-3 px-3 py-3 pr-20 text-left outline-none focus-visible:ring-3 focus-visible:ring-inset focus-visible:ring-ring/35"
+                                        >
+                                          <span
+                                            className={`size-2.5 shrink-0 rounded-full ring-4 ${
+                                              profile.credentialStatus ===
+                                              'ready'
+                                                ? 'bg-emerald-500 ring-emerald-500/10'
+                                                : 'bg-amber-500 ring-amber-500/10'
+                                            }`}
+                                          />
+                                          <span className="flex min-w-0 flex-1 flex-col">
+                                            <span className="truncate font-semibold text-slate-900">
+                                              {profile.label}
+                                            </span>
+                                            <span className="font-mono text-[11px] text-slate-500">
+                                              {profile.accountId}
+                                            </span>
+                                          </span>
+                                        </button>
+                                        <div className="absolute right-2 top-2 flex items-center gap-0.5">
+                                          {selected ? (
+                                            <span
+                                              className="flex size-7 items-center justify-center text-primary"
+                                              aria-label="当前选中"
+                                            >
+                                              <Check className="size-4" />
+                                            </span>
+                                          ) : null}
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              openLabelEditor(profile)
+                                            }
+                                            className="flex size-7 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-white hover:text-primary hover:shadow-sm"
+                                            aria-label={`编辑 ${profile.label} 的备注`}
+                                          >
+                                            <Pencil className="size-3.5" />
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              openProfileDelete(profile)
+                                            }
+                                            className="flex size-7 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600"
+                                            aria-label={`删除 ${profile.label}`}
+                                          >
+                                            <Trash2 className="size-3.5" />
+                                          </button>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </CollapsibleContent>
+                            </section>
+                          </Collapsible>
 
                           <section className="relative rounded-2xl border border-slate-200 bg-slate-50/55 p-4 sm:p-5">
                             <span className="absolute right-4 top-4 font-mono text-[10px] font-semibold tracking-[0.16em] text-slate-300">
