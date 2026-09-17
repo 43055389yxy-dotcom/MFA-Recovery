@@ -2,30 +2,26 @@ import { execFile } from 'node:child_process';
 import { createServer } from 'node:http';
 import { promisify } from 'node:util';
 
+import { MFA_TARGET_ROLE_NAME, targetRoleArn } from '../lib/mfa-role-config.js';
+
 const execFileAsync = promisify(execFile);
 const port = Number.parseInt(process.env.MFA_API_PORT || '3198', 10);
 const host = process.env.MFA_API_HOST || '127.0.0.1';
 const awsCliPath = process.env.AWS_CLI_PATH || '/usr/local/bin/aws';
-const legacyPayerProfilesService = 'mfa-recovery-payer-profiles';
-const legacyPayerProfilesAccount = 'profiles';
 const storageService = 'mfa-recovery-storage';
 let cachedStorageConfig;
-let legacyMigrationComplete = false;
 
 function validateInput(input) {
-  validateCredentialsInput(input);
+  if (!input || typeof input !== 'object') throw new Error('请求内容不正确。');
   if (!/^\d{12}$/.test(String(input.accountId || ''))) {
     throw new Error('目标账号 ID 必须是 12 位数字。');
   }
 }
 
-function validateCredentialsInput(input) {
+function validatePayerAccountInput(input) {
   if (!input || typeof input !== 'object') throw new Error('请求内容不正确。');
-  if (!/^(?:AKIA|ASIA)[A-Z0-9]{16}$/.test(String(input.accessKeyId || ''))) {
-    throw new Error('Access Key ID 格式不正确。');
-  }
-  if (String(input.secretAccessKey || '').length < 30) {
-    throw new Error('Secret Access Key 格式不正确。');
+  if (!/^\d{12}$/.test(String(input.payerAccountId || ''))) {
+    throw new Error('代付管理账号 ID 必须是 12 位数字。');
   }
 }
 
@@ -51,10 +47,6 @@ function awsEnvironment(input) {
     environment.AWS_ACCESS_KEY_ID = input.accessKeyId;
     environment.AWS_SECRET_ACCESS_KEY = input.secretAccessKey;
     if (input.sessionToken) environment.AWS_SESSION_TOKEN = input.sessionToken;
-  } else {
-    delete environment.AWS_ACCESS_KEY_ID;
-    delete environment.AWS_SECRET_ACCESS_KEY;
-    delete environment.AWS_SESSION_TOKEN;
   }
   return environment;
 }
@@ -117,47 +109,6 @@ async function keychainSecret(service, account) {
   return result.stdout.trim();
 }
 
-async function deleteKeychainSecret(service, account) {
-  if (process.platform !== 'darwin') return;
-  try {
-    await execFileAsync('/usr/bin/security', [
-      'delete-generic-password',
-      '-a',
-      account,
-      '-s',
-      service,
-    ]);
-  } catch (error) {
-    if (
-      !/could not be found|item not found/i.test(String(error?.stderr || ''))
-    ) {
-      throw error;
-    }
-  }
-}
-
-async function readLegacyPayerProfiles() {
-  try {
-    const value = await keychainSecret(
-      legacyPayerProfilesService,
-      legacyPayerProfilesAccount,
-    );
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-async function readLegacyTestCredentials() {
-  const [accessKeyId, secretAccessKey, accountId] = await Promise.all([
-    keychainSecret('mfa-recovery-test-payer', 'access-key-id'),
-    keychainSecret('mfa-recovery-test-payer', 'secret-access-key'),
-    keychainSecret('mfa-recovery-test-payer', 'target-account-id'),
-  ]);
-  return { accessKeyId, secretAccessKey, accountId };
-}
-
 async function storageConfig() {
   if (cachedStorageConfig) return cachedStorageConfig;
   const environmentConfig = {
@@ -171,7 +122,6 @@ async function storageConfig() {
   const storageLocationConfigured = [
     environmentConfig.region,
     environmentConfig.tableName,
-    environmentConfig.kmsKeyId,
     environmentConfig.partitionKey,
   ].every(Boolean);
   const staticCredentialsConfigured = Boolean(
@@ -227,43 +177,6 @@ function dynamoString(item, key) {
   return item?.[key]?.S || '';
 }
 
-async function encryptProfileCredentials(profile) {
-  const config = await storageConfig();
-  const plaintext = Buffer.from(
-    JSON.stringify({
-      accessKeyId: profile.accessKeyId,
-      secretAccessKey: profile.secretAccessKey,
-      ...(profile.sessionToken ? { sessionToken: profile.sessionToken } : {}),
-    }),
-    'utf8',
-  ).toString('base64');
-  const result = await storageAws([
-    'kms',
-    'encrypt',
-    '--key-id',
-    config.kmsKeyId,
-    '--plaintext',
-    plaintext,
-    '--encryption-context',
-    `profileId=${profile.id}`,
-  ]);
-  if (!result.CiphertextBlob) throw new Error('代付账号凭证加密失败。');
-  return result.CiphertextBlob;
-}
-
-async function decryptProfileCredentials(profileId, ciphertext) {
-  const result = await storageAws([
-    'kms',
-    'decrypt',
-    '--ciphertext-blob',
-    ciphertext,
-    '--encryption-context',
-    `profileId=${profileId}`,
-  ]);
-  if (!result.Plaintext) throw new Error('代付账号凭证解密失败。');
-  return JSON.parse(Buffer.from(result.Plaintext, 'base64').toString('utf8'));
-}
-
 async function readDynamoProfiles() {
   const config = await storageConfig();
   const result = await storageAws([
@@ -273,31 +186,20 @@ async function readDynamoProfiles() {
     config.tableName,
     '--consistent-read',
   ]);
-  const profiles = await Promise.all(
-    (result.Items || []).map(async (item) => {
-      const id = dynamoString(item, config.partitionKey);
-      const credentialsCiphertext = dynamoString(item, 'credentialsCiphertext');
-      const credentials = credentialsCiphertext
-        ? await decryptProfileCredentials(id, credentialsCiphertext)
-        : null;
-      return {
-        id,
-        accountId: dynamoString(item, 'accountId'),
-        callerArn: dynamoString(item, 'callerArn'),
-        label: dynamoString(item, 'label'),
-        accessKeyId: credentials?.accessKeyId || '',
-        secretAccessKey: credentials?.secretAccessKey || '',
-        ...(credentials?.sessionToken
-          ? { sessionToken: credentials.sessionToken }
-          : {}),
-        credentialStatus: credentials ? 'ready' : 'missing',
-        lastTargetAccountId: '',
-        source: 'saved',
-        addedAt: dynamoString(item, 'addedAt'),
-        updatedAt: dynamoString(item, 'updatedAt'),
-      };
-    }),
-  );
+  const profiles = (result.Items || []).map((item) => {
+    const id = dynamoString(item, config.partitionKey);
+    return {
+      id,
+      accountId: dynamoString(item, 'accountId'),
+      callerArn: dynamoString(item, 'callerArn'),
+      roleArn: dynamoString(item, 'roleArn'),
+      label: dynamoString(item, 'label'),
+      lastTargetAccountId: '',
+      source: 'saved',
+      addedAt: dynamoString(item, 'addedAt'),
+      updatedAt: dynamoString(item, 'updatedAt'),
+    };
+  });
   return profiles.sort((left, right) =>
     String(right.updatedAt).localeCompare(String(left.updatedAt)),
   );
@@ -305,25 +207,19 @@ async function readDynamoProfiles() {
 
 async function putDynamoProfile(profile) {
   const config = await storageConfig();
-  const hasCredentials = Boolean(
-    profile.accessKeyId && profile.secretAccessKey,
-  );
+  const roleReady = Boolean(profile.roleArn);
   const item = {
     [config.partitionKey]: { S: profile.id },
     accountId: { S: profile.accountId },
     callerArn: { S: profile.callerArn || '' },
     label: { S: profile.label || `代付账号 ${profile.accountId}` },
-    credentialStatus: { S: hasCredentials ? 'ready' : 'missing' },
+    credentialStatus: { S: roleReady ? 'ready' : 'missing' },
     lastTargetAccountId: { S: '' },
     source: { S: 'saved' },
     addedAt: { S: profile.addedAt || new Date().toISOString() },
     updatedAt: { S: profile.updatedAt || new Date().toISOString() },
   };
-  if (hasCredentials) {
-    item.credentialsCiphertext = {
-      S: await encryptProfileCredentials(profile),
-    };
-  }
+  if (roleReady) item.roleArn = { S: profile.roleArn };
   await storageAws([
     'dynamodb',
     'put-item',
@@ -346,64 +242,7 @@ async function deleteDynamoProfile(profileId) {
   ]);
 }
 
-async function clearLegacyProfiles() {
-  await Promise.all([
-    deleteKeychainSecret(
-      legacyPayerProfilesService,
-      legacyPayerProfilesAccount,
-    ),
-    deleteKeychainSecret('mfa-recovery-test-payer', 'access-key-id'),
-    deleteKeychainSecret('mfa-recovery-test-payer', 'secret-access-key'),
-    deleteKeychainSecret('mfa-recovery-test-payer', 'target-account-id'),
-  ]);
-}
-
-async function migrateLegacyProfiles() {
-  if (legacyMigrationComplete) return;
-  const remoteProfiles = await readDynamoProfiles();
-  const legacyProfiles = await readLegacyPayerProfiles();
-  try {
-    const credentials = await readLegacyTestCredentials();
-    const caller = await aws(credentials, ['sts', 'get-caller-identity']);
-    if (
-      caller.Account &&
-      !legacyProfiles.some((profile) => profile.accountId === caller.Account)
-    ) {
-      const now = new Date().toISOString();
-      legacyProfiles.push({
-        id: `payer:${caller.Account}`,
-        accountId: caller.Account,
-        callerArn: caller.Arn || '',
-        label: `代付账号 ${caller.Account}`,
-        accessKeyId: credentials.accessKeyId,
-        secretAccessKey: credentials.secretAccessKey,
-        lastTargetAccountId: credentials.accountId,
-        source: 'saved',
-        addedAt: now,
-        updatedAt: now,
-      });
-    }
-  } catch {
-    // 没有旧测试凭证时无需迁移。
-  }
-
-  for (const profile of legacyProfiles) {
-    if (
-      !remoteProfiles.some((remote) => remote.accountId === profile.accountId)
-    ) {
-      await putDynamoProfile({
-        ...profile,
-        id: `payer:${profile.accountId}`,
-        source: 'saved',
-      });
-    }
-  }
-  await clearLegacyProfiles();
-  legacyMigrationComplete = true;
-}
-
 async function readPayerProfiles() {
-  await migrateLegacyProfiles();
   return readDynamoProfiles();
 }
 
@@ -420,17 +259,16 @@ async function writePayerProfiles(profiles) {
 }
 
 function publicPayerProfile(profile) {
-  const credentialsReady = Boolean(
-    profile.accessKeyId && profile.secretAccessKey,
-  );
+  const roleReady = Boolean(profile.roleArn);
   return {
     id: profile.id,
     accountId: profile.accountId,
     label: profile.label || `代付账号 ${profile.accountId}`,
-    accessKeyMask: credentialsReady
-      ? `${profile.accessKeyId.slice(0, 4)}••••${profile.accessKeyId.slice(-4)}`
-      : '待补充凭证',
-    credentialStatus: credentialsReady ? 'ready' : 'missing',
+    roleArn: profile.roleArn || '',
+    connectionLabel: roleReady
+      ? `受信任 Role · ${MFA_TARGET_ROLE_NAME}`
+      : '待重新授权',
+    credentialStatus: roleReady ? 'ready' : 'missing',
     lastTargetAccountId: '',
     source: 'saved',
   };
@@ -453,9 +291,8 @@ async function savePayerProfile(input, caller) {
     id: `payer:${caller.Account}`,
     accountId: caller.Account,
     callerArn: caller.Arn || '',
+    roleArn: targetRoleArn(caller.Account),
     label: requestedLabel || existing?.label || `代付账号 ${caller.Account}`,
-    accessKeyId: input.accessKeyId,
-    secretAccessKey: input.secretAccessKey,
     lastTargetAccountId: '',
     source: 'saved',
     addedAt: existing?.addedAt || now,
@@ -507,24 +344,62 @@ async function deletePayerProfile(input) {
   };
 }
 
-async function resolveInput(input) {
-  if (input?.profileId) {
-    const profiles = await readPayerProfiles();
-    const profile = profiles.find(
-      (candidate) => candidate.id === input.profileId,
-    );
-    if (!profile) throw new Error('没有找到已保存的代付账号。');
-    if (!profile.accessKeyId || !profile.secretAccessKey) {
-      throw new Error('该账号已保留，请先补充 AK/SK 后再开始恢复。');
-    }
-    return {
-      ...input,
-      accessKeyId: profile.accessKeyId,
-      secretAccessKey: profile.secretAccessKey,
-      accountId: input.accountId || profile.lastTargetAccountId,
-    };
+async function assumePayerRole(accountId, roleArn = targetRoleArn(accountId)) {
+  if (!/^\d{12}$/.test(String(accountId || ''))) {
+    throw new Error('代付管理账号 ID 必须是 12 位数字。');
   }
-  return input;
+
+  let lastError;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      const result = await aws({}, [
+        'sts',
+        'assume-role',
+        '--role-arn',
+        roleArn,
+        '--role-session-name',
+        'MfaRecoveryWeb',
+        '--duration-seconds',
+        '3600',
+      ]);
+      if (!result.Credentials?.AccessKeyId) {
+        throw new Error('无法取得代付账号 Role 的临时凭证。');
+      }
+      return temporaryInput(
+        { payerAccountId: accountId, roleArn },
+        result.Credentials,
+      );
+    } catch (error) {
+      lastError = error;
+      if (attempt < 3) {
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
+      }
+    }
+  }
+  throw new Error(
+    `无法进入 ${MFA_TARGET_ROLE_NAME}，请先在代付管理账号执行 PowerShell 授权命令。${lastError?.message ? ` ${lastError.message}` : ''}`,
+  );
+}
+
+async function resolveInput(input) {
+  if (!input?.profileId) return input;
+
+  const profiles = await readPayerProfiles();
+  const profile = profiles.find(
+    (candidate) => candidate.id === input.profileId,
+  );
+  if (!profile) throw new Error('没有找到已保存的代付账号。');
+  if (!profile.roleArn) {
+    throw new Error(
+      '该账号仍是旧 AK/SK 接入方式，请重新执行 PowerShell 命令授权 Role。',
+    );
+  }
+  const assumed = await assumePayerRole(profile.accountId, profile.roleArn);
+  return {
+    ...input,
+    ...assumed,
+    accountId: input.accountId || profile.lastTargetAccountId,
+  };
 }
 
 async function preflight(input) {
@@ -645,147 +520,22 @@ async function enableCentralizedRootAccess(input) {
   };
 }
 
-function shellQuote(value) {
-  return `'${String(value).replaceAll("'", `'"'"'`)}'`;
-}
-
-function cloudShellCommand(lines) {
-  return [...lines, '', ''].join('\n');
-}
-
-function permissionInstructions(callerArn) {
-  const administratorPolicyArn = 'arn:aws:iam::aws:policy/AdministratorAccess';
-  if (/:user\//.test(callerArn)) {
-    const userName = callerArn.split('/').at(-1);
-    return {
-      principal: `IAM 用户 ${userName}`,
-      requiresNewCredentials: false,
-      command: cloudShellCommand([
-        'aws iam attach-user-policy \\',
-        `  --user-name ${shellQuote(userName)} \\`,
-        `  --policy-arn ${administratorPolicyArn}`,
-        'aws organizations enable-aws-service-access --service-principal account.amazonaws.com',
-      ]),
-    };
-  }
-
-  if (/:assumed-role\//.test(callerArn)) {
-    const roleName = callerArn.split(':assumed-role/')[1]?.split('/')[0] || '';
-    return {
-      principal: `IAM 角色 ${roleName}`,
-      requiresNewCredentials: false,
-      command: cloudShellCommand([
-        'aws iam attach-role-policy \\',
-        `  --role-name ${shellQuote(roleName)} \\`,
-        `  --policy-arn ${administratorPolicyArn}`,
-        'aws organizations enable-aws-service-access --service-principal account.amazonaws.com',
-      ]),
-    };
-  }
-
-  if (/:role\//.test(callerArn)) {
-    const roleName = callerArn.split('/').at(-1);
-    return {
-      principal: `IAM 角色 ${roleName}`,
-      requiresNewCredentials: false,
-      command: cloudShellCommand([
-        'aws iam attach-role-policy \\',
-        `  --role-name ${shellQuote(roleName)} \\`,
-        `  --policy-arn ${administratorPolicyArn}`,
-        'aws organizations enable-aws-service-access --service-principal account.amazonaws.com',
-      ]),
-    };
-  }
-
-  if (callerArn.endsWith(':root')) {
-    return {
-      principal: '根用户访问密钥',
-      requiresNewCredentials: true,
-      command: cloudShellCommand([
-        "USER_NAME='MfaRecoveryOperator'",
-        `POLICY_ARN=${shellQuote(administratorPolicyArn)}`,
-        'aws iam get-user --user-name "$USER_NAME" >/dev/null 2>&1 || aws iam create-user --user-name "$USER_NAME"',
-        'for KEY_ID in $(aws iam list-access-keys --user-name "$USER_NAME" --query \'AccessKeyMetadata[].AccessKeyId\' --output text); do',
-        '  [ "$KEY_ID" = "None" ] || aws iam delete-access-key --user-name "$USER_NAME" --access-key-id "$KEY_ID"',
-        'done',
-        'aws iam attach-user-policy --user-name "$USER_NAME" --policy-arn "$POLICY_ARN"',
-        'aws organizations enable-aws-service-access --service-principal account.amazonaws.com',
-        'aws iam create-access-key --user-name "$USER_NAME" --output json',
-      ]),
-    };
-  }
-
-  return {
-    principal: callerArn,
-    requiresNewCredentials: false,
-    command: cloudShellCommand([
-      `请在 IAM 中为 ${callerArn} 添加 AdministratorAccess 权限。`,
-    ]),
-  };
-}
-
-function isPermissionError(error) {
-  return /AccessDenied|not authorized|UnauthorizedOperation|lacks permissions|permission/i.test(
-    String(error?.message || ''),
-  );
-}
-
 async function registerPayerAccount(input) {
-  validateCredentialsInput(input);
-  const caller = await aws(input, ['sts', 'get-caller-identity']);
+  validatePayerAccountInput(input);
+  const assumed = await assumePayerRole(input.payerAccountId);
+  const [caller, organizationResult] = await Promise.all([
+    aws(assumed, ['sts', 'get-caller-identity']),
+    aws(assumed, ['organizations', 'describe-organization']),
+  ]);
   if (!caller.Account || !caller.Arn) throw new Error('无法识别执行账号。');
-
-  const instructions = permissionInstructions(caller.Arn);
-  if (instructions.requiresNewCredentials) {
-    return {
-      ready: false,
-      caller: { accountId: caller.Account, arn: caller.Arn },
-      ...instructions,
-    };
-  }
-
-  try {
-    let policies = [];
-    if (/:user\//.test(caller.Arn)) {
-      const userName = caller.Arn.split('/').at(-1);
-      const result = await aws(input, [
-        'iam',
-        'list-attached-user-policies',
-        '--user-name',
-        userName,
-      ]);
-      policies = result.AttachedPolicies || [];
-    } else {
-      const roleName = caller.Arn.includes(':assumed-role/')
-        ? caller.Arn.split(':assumed-role/')[1]?.split('/')[0]
-        : caller.Arn.split('/').at(-1);
-      const result = await aws(input, [
-        'iam',
-        'list-attached-role-policies',
-        '--role-name',
-        roleName,
-      ]);
-      policies = result.AttachedPolicies || [];
-    }
-
-    const hasAdministratorAccess = policies.some(
-      (policy) =>
-        policy.PolicyArn === 'arn:aws:iam::aws:policy/AdministratorAccess',
-    );
-    if (!hasAdministratorAccess) {
-      return {
-        ready: false,
-        caller: { accountId: caller.Account, arn: caller.Arn },
-        ...instructions,
-      };
-    }
-  } catch (error) {
-    if (!isPermissionError(error)) throw error;
-    return {
-      ready: false,
-      caller: { accountId: caller.Account, arn: caller.Arn },
-      ...instructions,
-    };
+  const organization = organizationResult.Organization || {};
+  const managementAccountId =
+    organization.ManagementAccountId || organization.MasterAccountId || '';
+  if (
+    caller.Account !== input.payerAccountId ||
+    caller.Account !== managementAccountId
+  ) {
+    throw new Error('请在 AWS Organizations 管理账号中创建受信任 Role。');
   }
 
   return {
@@ -799,42 +549,18 @@ async function checkPayerAccount(input) {
   validateInput(input);
   const caller = await aws(input, ['sts', 'get-caller-identity']);
   if (!caller.Account || !caller.Arn) throw new Error('无法识别代付账号。');
-  const instructions = permissionInstructions(caller.Arn);
-
-  if (instructions.requiresNewCredentials) {
-    return {
-      ready: false,
-      caller: { accountId: caller.Account, arn: caller.Arn },
-      ...instructions,
-    };
-  }
-
-  try {
-    const status = await preflight(input);
-    const stored = input.profileId?.startsWith('payer:')
-      ? (await readPayerProfiles()).find(
-          (candidate) => candidate.id === input.profileId,
-        )
-      : null;
-    const profile = stored
-      ? publicPayerProfile(stored)
-      : publicPayerProfile({
-          id: input.profileId,
-          accountId: caller.Account,
-          label: `代付账号 ${caller.Account}`,
-          accessKeyId: input.accessKeyId,
-          lastTargetAccountId: input.accountId,
-          source: 'saved',
-        });
-    return { ready: true, profile, preflight: status };
-  } catch (error) {
-    if (!isPermissionError(error)) throw error;
-    return {
-      ready: false,
-      caller: { accountId: caller.Account, arn: caller.Arn },
-      ...instructions,
-    };
-  }
+  const status = await preflight(input);
+  const stored = input.profileId?.startsWith('payer:')
+    ? (await readPayerProfiles()).find(
+        (candidate) => candidate.id === input.profileId,
+      )
+    : null;
+  if (!stored) throw new Error('没有找到已保存的代付账号。');
+  return {
+    ready: true,
+    profile: publicPayerProfile(stored),
+    preflight: status,
+  };
 }
 
 async function assumeRoot(input, taskPolicyName) {

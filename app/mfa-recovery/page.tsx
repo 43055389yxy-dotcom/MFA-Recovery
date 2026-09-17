@@ -10,8 +10,6 @@ import {
   ChevronDown,
   Circle,
   Copy,
-  Eye,
-  EyeOff,
   KeyRound,
   LoaderCircle,
   MailCheck,
@@ -68,10 +66,10 @@ import {
 } from '@/components/ui/popover';
 import { Progress } from '@/components/ui/progress';
 import { Switch } from '@/components/ui/switch';
+import { createPayerRolePowerShellCommand } from '@/lib/mfa-role-config.js';
 
 type FormState = {
-  accessKeyId: string;
-  secretAccessKey: string;
+  payerAccountId: string;
   accountId: string;
 };
 
@@ -107,7 +105,8 @@ type PayerProfile = {
   id: string;
   accountId: string;
   label: string;
-  accessKeyMask: string;
+  roleArn: string;
+  connectionLabel: string;
   credentialStatus: 'ready' | 'missing';
   lastTargetAccountId: string;
   source: 'saved' | 'test';
@@ -116,7 +115,6 @@ type PayerProfile = {
 type ApiResult = Partial<RootStatus> & {
   ok: boolean;
   enabled?: boolean;
-  accessKeyMask?: string;
   accountId?: string;
   profiles?: PayerProfile[];
   profile?: PayerProfile;
@@ -144,20 +142,7 @@ const stages = [
   { label: '密码与 MFA', detail: '完成设置' },
 ];
 
-const createPayerOperatorCommand = [
-  "USER_NAME='MfaRecoveryOperator'",
-  "POLICY_ARN='arn:aws:iam::aws:policy/AdministratorAccess'",
-  'aws iam get-user --user-name "$USER_NAME" >/dev/null 2>&1 || \\',
-  '  aws iam create-user --user-name "$USER_NAME"',
-  'for KEY_ID in $(aws iam list-access-keys --user-name "$USER_NAME" --query \'AccessKeyMetadata[].AccessKeyId\' --output text); do',
-  '  [ "$KEY_ID" = "None" ] || aws iam delete-access-key --user-name "$USER_NAME" --access-key-id "$KEY_ID"',
-  'done',
-  'aws iam attach-user-policy --user-name "$USER_NAME" --policy-arn "$POLICY_ARN"',
-  'aws organizations enable-aws-service-access --service-principal account.amazonaws.com',
-  'aws iam create-access-key --user-name "$USER_NAME" --output json',
-  '',
-  '',
-].join('\n');
+const createPayerOperatorCommand = createPayerRolePowerShellCommand();
 
 async function postJson<T>(path: string, body: unknown): Promise<T> {
   const apiBase = ['localhost', '127.0.0.1'].includes(window.location.hostname)
@@ -260,12 +245,10 @@ function PageActions({
 
 export default function MfaRecoveryPage() {
   const [form, setForm] = useState<FormState>({
-    accessKeyId: '',
-    secretAccessKey: '',
+    payerAccountId: '',
     accountId: '',
   });
   const [currentStage, setCurrentStage] = useState(0);
-  const [showSecret, setShowSecret] = useState(false);
   const [profiles, setProfiles] = useState<PayerProfile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState('');
   const [addingPayer, setAddingPayer] = useState(false);
@@ -297,10 +280,8 @@ export default function MfaRecoveryPage() {
     useState<EmailUpdateState>('idle');
 
   const canSavePayer = useMemo(
-    () =>
-      /^(?:AKIA|ASIA)[A-Z0-9]{16}$/.test(form.accessKeyId.trim()) &&
-      form.secretAccessKey.trim().length >= 30,
-    [form.accessKeyId, form.secretAccessKey],
+    () => /^\d{12}$/.test(form.payerAccountId.trim()),
+    [form.payerAccountId],
   );
 
   const selectedProfile = profiles.find(
@@ -326,12 +307,7 @@ export default function MfaRecoveryPage() {
   );
 
   const requestBody = {
-    ...(selectedProfileId
-      ? { profileId: selectedProfileId }
-      : {
-          accessKeyId: form.accessKeyId.trim(),
-          secretAccessKey: form.secretAccessKey.trim(),
-        }),
+    ...(selectedProfileId ? { profileId: selectedProfileId } : {}),
     accountId: form.accountId.trim(),
     ...(addingPayer && newPayerLabel.trim()
       ? { label: newPayerLabel.trim() }
@@ -413,8 +389,7 @@ export default function MfaRecoveryPage() {
     setCommandCopied(false);
     setNewPayerLabel('');
     setForm({
-      accessKeyId: '',
-      secretAccessKey: '',
+      payerAccountId: '',
       accountId: '',
     });
   }
@@ -428,8 +403,7 @@ export default function MfaRecoveryPage() {
     setPermissionDialogOpen(true);
     setForm((current) => ({
       ...current,
-      accessKeyId: '',
-      secretAccessKey: '',
+      payerAccountId: '',
     }));
   }
 
@@ -443,8 +417,7 @@ export default function MfaRecoveryPage() {
     setProfilePickerOpen(false);
     setForm((current) => ({
       ...current,
-      accessKeyId: '',
-      secretAccessKey: '',
+      payerAccountId: profile.accountId,
     }));
     setPermissionDialogOpen(true);
   }
@@ -457,8 +430,7 @@ export default function MfaRecoveryPage() {
       setNewPayerLabel('');
       setForm((current) => ({
         ...current,
-        accessKeyId: '',
-        secretAccessKey: '',
+        payerAccountId: '',
       }));
     }
     resetMessages();
@@ -522,8 +494,7 @@ export default function MfaRecoveryPage() {
         setSelectedProfileId(nextProfile.id);
         setAddingPayer(false);
         setForm({
-          accessKeyId: '',
-          secretAccessKey: '',
+          payerAccountId: '',
           accountId: '',
         });
       } else {
@@ -532,7 +503,7 @@ export default function MfaRecoveryPage() {
         setPermissionCommand(createPayerOperatorCommand);
         setPermissionPrincipal('新账号操作用户');
         setCommandCopied(false);
-        setForm({ accessKeyId: '', secretAccessKey: '', accountId: '' });
+        setForm({ payerAccountId: '', accountId: '' });
       }
     }
     setNotice('执行账号已删除。');
@@ -541,18 +512,10 @@ export default function MfaRecoveryPage() {
   async function connect() {
     if (addingPayer) {
       const result = await runAction('/api/aws/mfa/profiles/register', {
-        accessKeyId: form.accessKeyId.trim(),
-        secretAccessKey: form.secretAccessKey.trim(),
+        payerAccountId: form.payerAccountId.trim(),
         ...(newPayerLabel.trim() ? { label: newPayerLabel.trim() } : {}),
       });
       if (!result) return;
-      if (!result.ready) {
-        setPermissionCommand(result.command || '');
-        setPermissionPrincipal(result.principal || '当前 AWS 身份');
-        setCommandCopied(false);
-        setPermissionDialogOpen(true);
-        return;
-      }
       if (!result.profile) return;
 
       const savedProfile = result.profile;
@@ -568,8 +531,8 @@ export default function MfaRecoveryPage() {
       setPermissionPrincipal('');
       setPermissionDialogOpen(false);
       setNewPayerLabel('');
-      setForm({ accessKeyId: '', secretAccessKey: '', accountId: '' });
-      setNotice('执行账号已保存。');
+      setForm({ payerAccountId: '', accountId: '' });
+      setNotice('受信任 Role 验证通过，执行账号已保存。');
       return;
     }
 
@@ -591,8 +554,7 @@ export default function MfaRecoveryPage() {
           if (nextProfile) {
             setSelectedProfileId(nextProfile.id);
             setForm({
-              accessKeyId: '',
-              secretAccessKey: '',
+              payerAccountId: '',
               accountId: '',
             });
             setNotice(`账号列表已更新，当前选择“${nextProfile.label}”。`);
@@ -602,7 +564,7 @@ export default function MfaRecoveryPage() {
             setPermissionCommand(createPayerOperatorCommand);
             setPermissionPrincipal('新账号操作用户');
             setCommandCopied(false);
-            setForm({ accessKeyId: '', secretAccessKey: '', accountId: '' });
+            setForm({ payerAccountId: '', accountId: '' });
             setPermissionDialogOpen(true);
             setNotice('暂无可用执行账号。');
           }
@@ -624,13 +586,6 @@ export default function MfaRecoveryPage() {
       connectionBody,
     );
     if (!result) return;
-    if (!result.ready) {
-      setPermissionCommand(result.command || '');
-      setPermissionPrincipal(result.principal || '当前 AK 所属身份');
-      setCommandCopied(false);
-      setPermissionDialogOpen(true);
-      return;
-    }
     if (!result.preflight) return;
     setPermissionCommand('');
     setPermissionPrincipal('');
@@ -644,8 +599,7 @@ export default function MfaRecoveryPage() {
       ]);
       setSelectedProfileId(result.profile.id);
       setForm((current) => ({
-        accessKeyId: '',
-        secretAccessKey: '',
+        payerAccountId: '',
         accountId: current.accountId,
       }));
     }
@@ -1037,7 +991,7 @@ export default function MfaRecoveryPage() {
                                         </span>
                                         <span className="font-mono text-[10px] text-muted-foreground">
                                           {profile.accountId} ·{' '}
-                                          {profile.accessKeyMask}
+                                          {profile.connectionLabel}
                                         </span>
                                       </span>
                                       {profile.id === selectedProfileId ? (
@@ -1114,7 +1068,10 @@ export default function MfaRecoveryPage() {
                                   >
                                     更换根邮箱
                                   </label>
-                                  <Badge variant="outline" className="text-[10px]">
+                                  <Badge
+                                    variant="outline"
+                                    className="text-[10px]"
+                                  >
                                     可选
                                   </Badge>
                                 </div>
@@ -1135,7 +1092,9 @@ export default function MfaRecoveryPage() {
                                   <Input
                                     value={newRootEmail}
                                     onChange={(event) => {
-                                      setNewRootEmail(event.target.value.slice(0, 64));
+                                      setNewRootEmail(
+                                        event.target.value.slice(0, 64),
+                                      );
                                       setEmailOtp('');
                                       setEmailUpdateState('idle');
                                     }}
@@ -1180,7 +1139,7 @@ export default function MfaRecoveryPage() {
                             {busy
                               ? '正在验证…'
                               : selectedProfile.credentialStatus === 'missing'
-                                ? '补充凭证'
+                                ? '更新 Role 授权'
                                 : '开始恢复'}
                           </Button>
                         </div>
@@ -1582,12 +1541,12 @@ export default function MfaRecoveryPage() {
               </span>
               <DialogHeader className="gap-1">
                 <DialogTitle className="text-xl tracking-tight">
-                  {addingPayer ? '添加执行账号' : '补充账号权限'}
+                  {addingPayer ? '添加代付管理账号' : '更新受信任 Role'}
                 </DialogTitle>
                 <DialogDescription>
                   {addingPayer
-                    ? '访问凭证配置'
-                    : `${permissionPrincipal || '当前身份'} 缺少所需权限`}
+                    ? '通过跨账号 Role 授权，无需创建或保存 AK/SK'
+                    : `为 ${permissionPrincipal || '当前账号'} 重新创建 Role`}
                 </DialogDescription>
               </DialogHeader>
             </div>
@@ -1602,7 +1561,8 @@ export default function MfaRecoveryPage() {
                 <div className="min-w-0 flex-1">
                   <p className="font-medium text-slate-950">授权命令</p>
                   <p className="mt-1 text-xs leading-5 text-slate-600">
-                    执行位置：AWS CloudShell
+                    在代付账号的 AWS Organizations 管理账号中，使用 PowerShell
+                    执行
                   </p>
                 </div>
               </div>
@@ -1613,7 +1573,7 @@ export default function MfaRecoveryPage() {
                 className="mt-4 h-10 w-full transition-all duration-200"
               >
                 {commandCopied ? <CheckCircle2 /> : <Copy />}
-                {commandCopied ? '已复制' : '复制命令'}
+                {commandCopied ? '已复制' : '复制 PowerShell 命令'}
               </Button>
             </section>
 
@@ -1624,7 +1584,7 @@ export default function MfaRecoveryPage() {
                     2
                   </span>
                   <div>
-                    <p className="font-medium text-slate-950">访问凭证</p>
+                    <p className="font-medium text-slate-950">验证并保存</p>
                   </div>
                 </div>
 
@@ -1635,6 +1595,29 @@ export default function MfaRecoveryPage() {
                     <AlertDescription>{error}</AlertDescription>
                   </Alert>
                 ) : null}
+
+                <div className="space-y-2">
+                  <label
+                    htmlFor="dialog-payer-account-id"
+                    className="text-xs font-medium text-slate-600"
+                  >
+                    代付管理账号 ID
+                  </label>
+                  <Input
+                    id="dialog-payer-account-id"
+                    value={form.payerAccountId}
+                    onChange={(event) =>
+                      updateField(
+                        'payerAccountId',
+                        event.target.value.replace(/\D/g, '').slice(0, 12),
+                      )
+                    }
+                    placeholder="输入 12 位管理账号 ID"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    className="h-10 rounded-xl bg-slate-50/70 font-mono tracking-[0.08em] shadow-none"
+                  />
+                </div>
 
                 <div className="space-y-2">
                   <label
@@ -1649,76 +1632,14 @@ export default function MfaRecoveryPage() {
                     onChange={(event) =>
                       setNewPayerLabel(event.target.value.slice(0, 40))
                     }
-                    placeholder="账号备注"
+                    placeholder="例如：西区代付"
                     className="h-10 rounded-xl bg-slate-50/70 shadow-none"
                   />
-                </div>
-
-                <div className="space-y-2">
-                  <label
-                    htmlFor="dialog-access-key"
-                    className="text-xs font-medium text-slate-600"
-                  >
-                    Access Key ID
-                  </label>
-                  <Input
-                    id="dialog-access-key"
-                    value={form.accessKeyId}
-                    onChange={(event) =>
-                      updateField(
-                        'accessKeyId',
-                        event.target.value.toUpperCase(),
-                      )
-                    }
-                    placeholder="AKIA…"
-                    autoComplete="off"
-                    spellCheck={false}
-                    className="h-10 rounded-xl font-mono shadow-none"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <label
-                    htmlFor="dialog-secret-key"
-                    className="text-xs font-medium text-slate-600"
-                  >
-                    Secret Access Key
-                  </label>
-                  <div className="relative">
-                    <Input
-                      id="dialog-secret-key"
-                      value={form.secretAccessKey}
-                      onChange={(event) =>
-                        updateField('secretAccessKey', event.target.value)
-                      }
-                      type={showSecret ? 'text' : 'password'}
-                      placeholder="输入 Secret Access Key"
-                      autoComplete="off"
-                      spellCheck={false}
-                      className="h-10 rounded-xl pr-11 font-mono shadow-none"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowSecret((visible) => !visible)}
-                      className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
-                      aria-label={
-                        showSecret
-                          ? '隐藏 Secret Access Key'
-                          : '显示 Secret Access Key'
-                      }
-                    >
-                      {showSecret ? (
-                        <EyeOff className="size-4" />
-                      ) : (
-                        <Eye className="size-4" />
-                      )}
-                    </button>
-                  </div>
                 </div>
               </section>
             ) : (
               <p className="rounded-xl bg-slate-50 p-4 text-sm leading-6 text-slate-600">
-                权限更新后重新执行检测。
+                重新执行 PowerShell 命令后，输入管理账号 ID 验证。
               </p>
             )}
           </div>
@@ -1744,7 +1665,7 @@ export default function MfaRecoveryPage() {
                 ) : (
                   <ShieldCheck />
                 )}
-                {busy ? '正在验证…' : '保存'}
+                {busy ? '正在验证 Role…' : '验证并添加'}
               </Button>
             </DialogFooter>
           ) : null}
@@ -1777,7 +1698,11 @@ export default function MfaRecoveryPage() {
               仅重新检测
             </Button>
             <Button onClick={enableRootAccess} disabled={busy}>
-              {busy ? <LoaderCircle className="animate-spin" /> : <ShieldCheck />}
+              {busy ? (
+                <LoaderCircle className="animate-spin" />
+              ) : (
+                <ShieldCheck />
+              )}
               {busy ? '正在启用…' : '自动启用并继续'}
             </Button>
           </DialogFooter>
