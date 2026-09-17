@@ -66,7 +66,7 @@ import {
 } from '@/components/ui/popover';
 import { Progress } from '@/components/ui/progress';
 import { Switch } from '@/components/ui/switch';
-import { createPayerRolePowerShellCommand } from '@/lib/mfa-role-config.js';
+import { createPayerRoleCloudShellCommand } from '@/lib/mfa-role-config.js';
 
 type FormState = {
   payerAccountId: string;
@@ -142,7 +142,7 @@ const stages = [
   { label: '密码与 MFA', detail: '完成设置' },
 ];
 
-const createPayerOperatorCommand = createPayerRolePowerShellCommand();
+const createPayerOperatorCommand = createPayerRoleCloudShellCommand();
 
 async function postJson<T>(path: string, body: unknown): Promise<T> {
   const apiBase = ['localhost', '127.0.0.1'].includes(window.location.hostname)
@@ -254,7 +254,6 @@ export default function MfaRecoveryPage() {
   const [addingPayer, setAddingPayer] = useState(false);
   const [profilesLoading, setProfilesLoading] = useState(true);
   const [permissionCommand, setPermissionCommand] = useState('');
-  const [permissionPrincipal, setPermissionPrincipal] = useState('');
   const [permissionDialogOpen, setPermissionDialogOpen] = useState(false);
   const [commandCopied, setCommandCopied] = useState(false);
   const [newPayerLabel, setNewPayerLabel] = useState('');
@@ -331,7 +330,6 @@ export default function MfaRecoveryPage() {
         } else {
           setAddingPayer(true);
           setPermissionCommand(createPayerOperatorCommand);
-          setPermissionPrincipal('新账号操作用户');
           setPermissionDialogOpen(true);
         }
       })
@@ -385,7 +383,6 @@ export default function MfaRecoveryPage() {
     setAddingPayer(false);
     setSelectedProfileId(profile.id);
     setPermissionCommand('');
-    setPermissionPrincipal('');
     setCommandCopied(false);
     setNewPayerLabel('');
     setForm({
@@ -398,28 +395,12 @@ export default function MfaRecoveryPage() {
     resetMessages();
     setAddingPayer(true);
     setPermissionCommand(createPayerOperatorCommand);
-    setPermissionPrincipal('新账号操作用户');
     setCommandCopied(false);
     setPermissionDialogOpen(true);
     setForm((current) => ({
       ...current,
       payerAccountId: '',
     }));
-  }
-
-  function startCompletingPayer(profile: PayerProfile) {
-    resetMessages();
-    setAddingPayer(true);
-    setNewPayerLabel(profile.label);
-    setPermissionCommand(createPayerOperatorCommand);
-    setPermissionPrincipal(profile.label);
-    setCommandCopied(false);
-    setProfilePickerOpen(false);
-    setForm((current) => ({
-      ...current,
-      payerAccountId: profile.accountId,
-    }));
-    setPermissionDialogOpen(true);
   }
 
   function closePayerDialog() {
@@ -501,7 +482,6 @@ export default function MfaRecoveryPage() {
         setSelectedProfileId('');
         setAddingPayer(true);
         setPermissionCommand(createPayerOperatorCommand);
-        setPermissionPrincipal('新账号操作用户');
         setCommandCopied(false);
         setForm({ payerAccountId: '', accountId: '' });
       }
@@ -528,7 +508,6 @@ export default function MfaRecoveryPage() {
       setSelectedProfileId(savedProfile.id);
       setAddingPayer(false);
       setPermissionCommand('');
-      setPermissionPrincipal('');
       setPermissionDialogOpen(false);
       setNewPayerLabel('');
       setForm({ payerAccountId: '', accountId: '' });
@@ -562,7 +541,6 @@ export default function MfaRecoveryPage() {
             setSelectedProfileId('');
             setAddingPayer(true);
             setPermissionCommand(createPayerOperatorCommand);
-            setPermissionPrincipal('新账号操作用户');
             setCommandCopied(false);
             setForm({ payerAccountId: '', accountId: '' });
             setPermissionDialogOpen(true);
@@ -588,7 +566,6 @@ export default function MfaRecoveryPage() {
     if (!result) return;
     if (!result.preflight) return;
     setPermissionCommand('');
-    setPermissionPrincipal('');
     setPermissionDialogOpen(false);
     if (result.profile) {
       setProfiles((current) => [
@@ -1120,27 +1097,15 @@ export default function MfaRecoveryPage() {
                           </Button>
                           <Button
                             className="h-10 min-w-36 px-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md"
-                            onClick={() =>
-                              selectedProfile.credentialStatus === 'missing'
-                                ? startCompletingPayer(selectedProfile)
-                                : connect()
-                            }
-                            disabled={
-                              selectedProfile.credentialStatus === 'ready'
-                                ? !canUseSaved || busy
-                                : busy
-                            }
+                            onClick={connect}
+                            disabled={!canUseSaved || busy}
                           >
                             {busy ? (
                               <LoaderCircle className="animate-spin" />
                             ) : (
                               <ArrowRight />
                             )}
-                            {busy
-                              ? '正在验证…'
-                              : selectedProfile.credentialStatus === 'missing'
-                                ? '更新 Role 授权'
-                                : '开始恢复'}
+                            {busy ? '正在验证…' : '开始恢复'}
                           </Button>
                         </div>
                       </div>
@@ -1541,12 +1506,10 @@ export default function MfaRecoveryPage() {
               </span>
               <DialogHeader className="gap-1">
                 <DialogTitle className="text-xl tracking-tight">
-                  {addingPayer ? '添加代付管理账号' : '更新受信任 Role'}
+                  添加代付管理账号
                 </DialogTitle>
                 <DialogDescription>
-                  {addingPayer
-                    ? '通过跨账号 Role 授权，无需创建或保存 AK/SK'
-                    : `为 ${permissionPrincipal || '当前账号'} 重新创建 Role`}
+                  通过跨账号 Role 授权，无需创建或保存 AK/SK
                 </DialogDescription>
               </DialogHeader>
             </div>
@@ -1561,7 +1524,7 @@ export default function MfaRecoveryPage() {
                 <div className="min-w-0 flex-1">
                   <p className="font-medium text-slate-950">授权命令</p>
                   <p className="mt-1 text-xs leading-5 text-slate-600">
-                    在代付账号的 AWS Organizations 管理账号中，使用 PowerShell
+                    在代付账号的 AWS Organizations 管理账号中，打开 CloudShell
                     执行
                   </p>
                 </div>
@@ -1573,102 +1536,94 @@ export default function MfaRecoveryPage() {
                 className="mt-4 h-10 w-full transition-all duration-200"
               >
                 {commandCopied ? <CheckCircle2 /> : <Copy />}
-                {commandCopied ? '已复制' : '复制 PowerShell 命令'}
+                {commandCopied ? '已复制' : '复制 CloudShell 命令'}
               </Button>
             </section>
 
-            {addingPayer ? (
-              <section className="space-y-4">
-                <div className="flex items-center gap-3">
-                  <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-slate-950 text-xs font-semibold text-white">
-                    2
-                  </span>
-                  <div>
-                    <p className="font-medium text-slate-950">验证并保存</p>
-                  </div>
+            <section className="space-y-4">
+              <div className="flex items-center gap-3">
+                <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-slate-950 text-xs font-semibold text-white">
+                  2
+                </span>
+                <div>
+                  <p className="font-medium text-slate-950">验证并保存</p>
                 </div>
+              </div>
 
-                {error ? (
-                  <Alert variant="destructive" className="bg-red-50">
-                    <XCircle />
-                    <AlertTitle>添加失败</AlertTitle>
-                    <AlertDescription>{error}</AlertDescription>
-                  </Alert>
-                ) : null}
+              {error ? (
+                <Alert variant="destructive" className="bg-red-50">
+                  <XCircle />
+                  <AlertTitle>添加失败</AlertTitle>
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              ) : null}
 
-                <div className="space-y-2">
-                  <label
-                    htmlFor="dialog-payer-account-id"
-                    className="text-xs font-medium text-slate-600"
-                  >
-                    代付管理账号 ID
-                  </label>
-                  <Input
-                    id="dialog-payer-account-id"
-                    value={form.payerAccountId}
-                    onChange={(event) =>
-                      updateField(
-                        'payerAccountId',
-                        event.target.value.replace(/\D/g, '').slice(0, 12),
-                      )
-                    }
-                    placeholder="输入 12 位管理账号 ID"
-                    inputMode="numeric"
-                    autoComplete="off"
-                    className="h-10 rounded-xl bg-slate-50/70 font-mono tracking-[0.08em] shadow-none"
-                  />
-                </div>
+              <div className="space-y-2">
+                <label
+                  htmlFor="dialog-payer-account-id"
+                  className="text-xs font-medium text-slate-600"
+                >
+                  代付管理账号 ID
+                </label>
+                <Input
+                  id="dialog-payer-account-id"
+                  value={form.payerAccountId}
+                  onChange={(event) =>
+                    updateField(
+                      'payerAccountId',
+                      event.target.value.replace(/\D/g, '').slice(0, 12),
+                    )
+                  }
+                  placeholder="输入 12 位管理账号 ID"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  className="h-10 rounded-xl bg-slate-50/70 font-mono tracking-[0.08em] shadow-none"
+                />
+              </div>
 
-                <div className="space-y-2">
-                  <label
-                    htmlFor="dialog-payer-label"
-                    className="text-xs font-medium text-slate-600"
-                  >
-                    账号备注
-                  </label>
-                  <Input
-                    id="dialog-payer-label"
-                    value={newPayerLabel}
-                    onChange={(event) =>
-                      setNewPayerLabel(event.target.value.slice(0, 40))
-                    }
-                    placeholder="例如：西区代付"
-                    className="h-10 rounded-xl bg-slate-50/70 shadow-none"
-                  />
-                </div>
-              </section>
-            ) : (
-              <p className="rounded-xl bg-slate-50 p-4 text-sm leading-6 text-slate-600">
-                重新执行 PowerShell 命令后，输入管理账号 ID 验证。
-              </p>
-            )}
+              <div className="space-y-2">
+                <label
+                  htmlFor="dialog-payer-label"
+                  className="text-xs font-medium text-slate-600"
+                >
+                  账号备注
+                </label>
+                <Input
+                  id="dialog-payer-label"
+                  value={newPayerLabel}
+                  onChange={(event) =>
+                    setNewPayerLabel(event.target.value.slice(0, 40))
+                  }
+                  placeholder="例如：西区代付"
+                  className="h-10 rounded-xl bg-slate-50/70 shadow-none"
+                />
+              </div>
+            </section>
           </div>
 
-          {addingPayer ? (
-            <DialogFooter className="mx-0 mb-0 rounded-none border-t bg-slate-50/80 px-6 py-4">
-              {profiles.length ? (
-                <Button
-                  variant="outline"
-                  onClick={closePayerDialog}
-                  disabled={busy}
-                >
-                  取消
-                </Button>
-              ) : null}
+          <DialogFooter className="mx-0 mb-0 rounded-none border-t bg-slate-50/80 px-6 py-4">
+            {profiles.length ? (
               <Button
-                onClick={connect}
-                disabled={!canSavePayer || busy}
-                className="min-w-40"
+                variant="outline"
+                onClick={closePayerDialog}
+                disabled={busy}
               >
-                {busy ? (
-                  <LoaderCircle className="animate-spin" />
-                ) : (
-                  <ShieldCheck />
-                )}
-                {busy ? '正在验证 Role…' : '验证并添加'}
+                取消
               </Button>
-            </DialogFooter>
-          ) : null}
+            ) : null}
+            <Button
+              onClick={connect}
+              disabled={!canSavePayer || busy}
+              className="min-w-40"
+            >
+              {busy ? (
+                <LoaderCircle className="animate-spin" />
+              ) : (
+                <ShieldCheck />
+              )}
+              {busy ? '正在验证 Role…' : '验证并添加'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

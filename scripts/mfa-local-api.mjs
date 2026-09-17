@@ -200,9 +200,11 @@ async function readDynamoProfiles() {
       updatedAt: dynamoString(item, 'updatedAt'),
     };
   });
-  return profiles.sort((left, right) =>
-    String(right.updatedAt).localeCompare(String(left.updatedAt)),
-  );
+  return profiles
+    .filter((profile) => profile.roleArn)
+    .sort((left, right) =>
+      String(right.updatedAt).localeCompare(String(left.updatedAt)),
+    );
 }
 
 async function putDynamoProfile(profile) {
@@ -377,7 +379,7 @@ async function assumePayerRole(accountId, roleArn = targetRoleArn(accountId)) {
     }
   }
   throw new Error(
-    `无法进入 ${MFA_TARGET_ROLE_NAME}，请先在代付管理账号执行 PowerShell 授权命令。${lastError?.message ? ` ${lastError.message}` : ''}`,
+    `无法进入 ${MFA_TARGET_ROLE_NAME}，请先在代付管理账号执行 CloudShell 授权命令。${lastError?.message ? ` ${lastError.message}` : ''}`,
   );
 }
 
@@ -391,7 +393,7 @@ async function resolveInput(input) {
   if (!profile) throw new Error('没有找到已保存的代付账号。');
   if (!profile.roleArn) {
     throw new Error(
-      '该账号仍是旧 AK/SK 接入方式，请重新执行 PowerShell 命令授权 Role。',
+      '该账号仍是旧 AK/SK 接入方式，请重新执行 CloudShell 命令授权 Role。',
     );
   }
   const assumed = await assumePayerRole(profile.accountId, profile.roleArn);
