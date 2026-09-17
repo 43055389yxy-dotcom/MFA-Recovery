@@ -25,18 +25,6 @@ function validatePayerAccountInput(input) {
   }
 }
 
-function validatePrimaryEmail(input) {
-  const primaryEmail = String(input.primaryEmail || '').trim();
-  if (
-    primaryEmail.length < 5 ||
-    primaryEmail.length > 64 ||
-    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(primaryEmail)
-  ) {
-    throw new Error('新根邮箱格式不正确。');
-  }
-  return primaryEmail;
-}
-
 function awsEnvironment(input) {
   const environment = {
     ...process.env,
@@ -687,80 +675,6 @@ async function allowPasswordRecovery(input) {
   return { changes: ['已允许目标账号通过根用户邮箱重置密码'] };
 }
 
-async function ensureAccountManagementAccess(input) {
-  const serviceAccess = await aws(input, [
-    'organizations',
-    'list-aws-service-access-for-organization',
-  ]);
-  const enabled = serviceAccess.EnabledServicePrincipals?.some(
-    (service) => service.ServicePrincipal === 'account.amazonaws.com',
-  );
-  if (enabled) return;
-  await aws(input, [
-    'organizations',
-    'enable-aws-service-access',
-    '--service-principal',
-    'account.amazonaws.com',
-  ]);
-}
-
-async function startPrimaryEmailUpdate(input) {
-  validateInput(input);
-  const primaryEmail = validatePrimaryEmail(input);
-  await ensureAccountManagementAccess(input);
-  const result = await aws(input, [
-    'account',
-    'start-primary-email-update',
-    '--region',
-    'us-east-1',
-    '--account-id',
-    input.accountId,
-    '--primary-email',
-    primaryEmail,
-  ]);
-  return { emailStatus: result.Status || 'PENDING', primaryEmail };
-}
-
-async function acceptPrimaryEmailUpdate(input) {
-  validateInput(input);
-  const primaryEmail = validatePrimaryEmail(input);
-  const otp = String(input.otp || '').trim();
-  if (!/^[A-Za-z0-9]{6}$/.test(otp)) {
-    throw new Error('验证码必须为 6 位字符。');
-  }
-  await aws(input, [
-    'account',
-    'accept-primary-email-update',
-    '--region',
-    'us-east-1',
-    '--account-id',
-    input.accountId,
-    '--primary-email',
-    primaryEmail,
-    '--otp',
-    otp,
-  ]);
-
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    const current = await aws(input, [
-      'account',
-      'get-primary-email',
-      '--region',
-      'us-east-1',
-      '--account-id',
-      input.accountId,
-    ]);
-    if (
-      String(current.PrimaryEmail || '').toLowerCase() ===
-      primaryEmail.toLowerCase()
-    ) {
-      return { emailStatus: 'COMPLETED', primaryEmail };
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1_000));
-  }
-  throw new Error('根邮箱更新尚未生效，请稍后重试。');
-}
-
 async function cleanupDelegation(input) {
   validateInput(input);
   const current = await preflight(input);
@@ -864,12 +778,6 @@ const server = createServer(async (request, response) => {
         break;
       case '/api/aws/mfa/root/recover':
         result = await allowPasswordRecovery(input);
-        break;
-      case '/api/aws/mfa/email/start':
-        result = await startPrimaryEmailUpdate(input);
-        break;
-      case '/api/aws/mfa/email/accept':
-        result = await acceptPrimaryEmailUpdate(input);
         break;
       case '/api/aws/mfa/cleanup':
         result = await cleanupDelegation(input);

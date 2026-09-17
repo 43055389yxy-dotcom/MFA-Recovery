@@ -7,7 +7,6 @@ import {
   Building2,
   Check,
   CheckCircle2,
-  ChevronDown,
   Circle,
   Copy,
   KeyRound,
@@ -54,18 +53,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import {
-  InputOTP,
-  InputOTPGroup,
-  InputOTPSlot,
-} from '@/components/ui/input-otp';
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover';
 import { Progress } from '@/components/ui/progress';
-import { Switch } from '@/components/ui/switch';
 import { createPayerRoleCloudShellCommand } from '@/lib/mfa-role-config.js';
 
 type FormState = {
@@ -127,12 +115,8 @@ type ApiResult = Partial<RootStatus> & {
   preflight?: Preflight;
   changes?: string[];
   status?: RootStatus;
-  emailStatus?: string;
-  primaryEmail?: string;
   error?: { message?: string };
 };
-
-type EmailUpdateState = 'idle' | 'code-sent' | 'completed';
 
 const stages = [
   { label: '连接账号', detail: '验证主账号' },
@@ -257,7 +241,6 @@ export default function MfaRecoveryPage() {
   const [permissionDialogOpen, setPermissionDialogOpen] = useState(false);
   const [commandCopied, setCommandCopied] = useState(false);
   const [newPayerLabel, setNewPayerLabel] = useState('');
-  const [profilePickerOpen, setProfilePickerOpen] = useState(false);
   const [labelDialogOpen, setLabelDialogOpen] = useState(false);
   const [labelDraft, setLabelDraft] = useState('');
   const [editingProfileId, setEditingProfileId] = useState('');
@@ -272,11 +255,6 @@ export default function MfaRecoveryPage() {
   const [recoveryAllowed, setRecoveryAllowed] = useState(false);
   const [rootHelpOpen, setRootHelpOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [emailChangeEnabled, setEmailChangeEnabled] = useState(false);
-  const [newRootEmail, setNewRootEmail] = useState('');
-  const [emailOtp, setEmailOtp] = useState('');
-  const [emailUpdateState, setEmailUpdateState] =
-    useState<EmailUpdateState>('idle');
 
   const canSavePayer = useMemo(
     () => /^\d{12}$/.test(form.payerAccountId.trim()),
@@ -286,14 +264,20 @@ export default function MfaRecoveryPage() {
   const selectedProfile = profiles.find(
     (profile) => profile.id === selectedProfileId,
   );
-  const validRootEmail =
-    newRootEmail.trim().length <= 64 &&
-    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newRootEmail.trim());
+  const displayedProfiles = useMemo(
+    () =>
+      [...profiles].sort((left, right) =>
+        left.label.localeCompare(right.label, 'zh-CN', {
+          numeric: true,
+          sensitivity: 'base',
+        }),
+      ),
+    [profiles],
+  );
   const canUseSaved = Boolean(
     selectedProfileId &&
     selectedProfile?.credentialStatus === 'ready' &&
-    /^\d{12}$/.test(form.accountId.trim()) &&
-    (!emailChangeEnabled || validRootEmail),
+    /^\d{12}$/.test(form.accountId.trim()),
   );
   const editingProfile = profiles.find(
     (profile) => profile.id === editingProfileId,
@@ -357,13 +341,6 @@ export default function MfaRecoveryPage() {
     setNotice('');
   }
 
-  function resetEmailChange() {
-    setEmailChangeEnabled(false);
-    setNewRootEmail('');
-    setEmailOtp('');
-    setEmailUpdateState('idle');
-  }
-
   async function runAction(path: string, body: unknown = requestBody) {
     setBusy(true);
     resetMessages();
@@ -379,7 +356,6 @@ export default function MfaRecoveryPage() {
 
   function selectProfile(profile: PayerProfile) {
     resetMessages();
-    resetEmailChange();
     setAddingPayer(false);
     setSelectedProfileId(profile.id);
     setPermissionCommand('');
@@ -425,14 +401,12 @@ export default function MfaRecoveryPage() {
   }
 
   function openLabelEditor(profile: PayerProfile) {
-    setProfilePickerOpen(false);
     setEditingProfileId(profile.id);
     setLabelDraft(profile.label);
     setLabelDialogOpen(true);
   }
 
   function openProfileDelete(profile: PayerProfile) {
-    setProfilePickerOpen(false);
     setProfileDeleteCandidate(profile);
   }
 
@@ -591,9 +565,7 @@ export default function MfaRecoveryPage() {
       result.preflight.rootAccess.rootCredentialsManagementEnabled;
     if (ready) {
       setNotice('账号验证通过。');
-      if (!emailChangeEnabled) {
-        await scanRootCredentials(connectionBody);
-      }
+      await scanRootCredentials(connectionBody);
     } else {
       setRootHelpOpen(true);
     }
@@ -610,9 +582,7 @@ export default function MfaRecoveryPage() {
     if (ready) {
       setRootHelpOpen(false);
       setNotice('集中式根访问已启用。');
-      if (!emailChangeEnabled) {
-        await scanRootCredentials();
-      }
+      await scanRootCredentials();
     } else {
       setRootHelpOpen(true);
       setError('仍未检测到完整的集中式根访问设置。');
@@ -638,9 +608,7 @@ export default function MfaRecoveryPage() {
         ? `${result.changes.join('、')}。`
         : '集中式根访问已经处于启用状态。',
     );
-    if (!emailChangeEnabled) {
-      await scanRootCredentials();
-    }
+    await scanRootCredentials();
   }
 
   async function scanRootCredentials(body: unknown = requestBody) {
@@ -668,29 +636,6 @@ export default function MfaRecoveryPage() {
     setCurrentStage(3);
     setNotice('未发现根凭证。');
     await allowRecovery(body, '未发现根凭证');
-  }
-
-  async function sendEmailCode() {
-    const result = await runAction('/api/aws/mfa/email/start', {
-      ...requestBody,
-      primaryEmail: newRootEmail.trim(),
-    });
-    if (!result) return;
-    setEmailOtp('');
-    setEmailUpdateState('code-sent');
-    setNotice('验证码已发送。');
-  }
-
-  async function confirmEmailUpdate() {
-    const result = await runAction('/api/aws/mfa/email/accept', {
-      ...requestBody,
-      primaryEmail: newRootEmail.trim(),
-      otp: emailOtp.trim(),
-    });
-    if (!result) return;
-    setEmailUpdateState('completed');
-    setNotice('根邮箱已更新。');
-    await scanRootCredentials();
   }
 
   async function deleteCredentials() {
@@ -746,7 +691,6 @@ export default function MfaRecoveryPage() {
 
   function resetFlow() {
     resetMessages();
-    resetEmailChange();
     setForm((current) => ({
       ...current,
       accountId: '',
@@ -883,7 +827,7 @@ export default function MfaRecoveryPage() {
                   <>
                     {selectedProfile ? (
                       <div className="animate-in fade-in duration-200">
-                        <div className="grid gap-4 lg:grid-cols-2">
+                        <div className="space-y-4">
                           <section className="relative rounded-2xl border border-slate-200 bg-slate-50/55 p-4 sm:p-5">
                             <span className="absolute right-4 top-4 font-mono text-[10px] font-semibold tracking-[0.16em] text-slate-300">
                               01
@@ -892,109 +836,86 @@ export default function MfaRecoveryPage() {
                               <span className="flex size-8 items-center justify-center rounded-lg bg-white text-slate-700 shadow-sm ring-1 ring-slate-200">
                                 <KeyRound className="size-4" />
                               </span>
-                              <div>
-                                <label
-                                  htmlFor="payer-profile"
-                                  className="text-sm font-semibold text-slate-900"
-                                >
+                              <div className="flex min-w-0 flex-1 items-center justify-between gap-3 pr-9">
+                                <p className="text-sm font-semibold text-slate-900">
                                   执行账号
-                                </label>
+                                </p>
+                                <Badge variant="outline">
+                                  {displayedProfiles.length} 个可用账号
+                                </Badge>
                               </div>
                             </div>
-                            <Popover
-                              open={profilePickerOpen}
-                              onOpenChange={setProfilePickerOpen}
+                            <div
+                              id="payer-profile"
+                              className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
                             >
-                              <PopoverTrigger
-                                id="payer-profile"
-                                className="flex h-16 w-full min-w-0 items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3.5 text-sm shadow-sm outline-none transition-all hover:border-slate-300 hover:shadow-md focus-visible:border-primary focus-visible:ring-3 focus-visible:ring-ring/35"
-                              >
-                                <span className="flex min-w-0 items-center gap-2.5">
-                                  <span
-                                    className={`size-2.5 shrink-0 rounded-full ring-4 ${
-                                      selectedProfile.credentialStatus ===
-                                      'ready'
-                                        ? 'bg-emerald-500 ring-emerald-500/10'
-                                        : 'bg-amber-500 ring-amber-500/10'
-                                    }`}
-                                  />
-                                  <span className="flex min-w-0 flex-col items-start">
-                                    <span className="truncate font-semibold text-slate-900">
-                                      {selectedProfile.label}
-                                    </span>
-                                    <span className="font-mono text-[10px] text-slate-500">
-                                      {selectedProfile.accountId}
-                                    </span>
-                                  </span>
-                                </span>
-                                <ChevronDown
-                                  className={`size-4 shrink-0 text-slate-400 transition-transform duration-200 ${
-                                    profilePickerOpen ? 'rotate-180' : ''
-                                  }`}
-                                />
-                              </PopoverTrigger>
-                              <PopoverContent
-                                align="start"
-                                sideOffset={6}
-                                className="w-(--anchor-width) min-w-80 gap-1 rounded-xl p-1.5"
-                              >
-                                {profiles.map((profile) => (
+                              {displayedProfiles.map((profile) => {
+                                const selected =
+                                  profile.id === selectedProfileId;
+                                return (
                                   <div
                                     key={profile.id}
-                                    className={`group flex items-center gap-1 rounded-lg transition-colors ${
-                                      profile.id === selectedProfileId
-                                        ? 'bg-primary/8'
-                                        : 'hover:bg-slate-50'
+                                    className={`group relative min-w-0 overflow-hidden rounded-xl border bg-white transition-all ${
+                                      selected
+                                        ? 'border-primary/45 bg-primary/5 shadow-sm ring-2 ring-primary/10'
+                                        : 'border-slate-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-sm'
                                     }`}
                                   >
                                     <button
                                       type="button"
-                                      onClick={() => {
-                                        selectProfile(profile);
-                                        setProfilePickerOpen(false);
-                                      }}
-                                      className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2 text-left"
+                                      aria-pressed={selected}
+                                      aria-label={`选择执行账号 ${profile.label} ${profile.accountId}`}
+                                      onClick={() => selectProfile(profile)}
+                                      className="flex min-h-20 w-full min-w-0 items-center gap-3 px-3 py-3 pr-20 text-left outline-none focus-visible:ring-3 focus-visible:ring-inset focus-visible:ring-ring/35"
                                     >
                                       <span
-                                        className={`size-2 shrink-0 rounded-full ${
+                                        className={`size-2.5 shrink-0 rounded-full ring-4 ${
                                           profile.credentialStatus === 'ready'
-                                            ? 'bg-emerald-500'
-                                            : 'bg-amber-500'
+                                            ? 'bg-emerald-500 ring-emerald-500/10'
+                                            : 'bg-amber-500 ring-amber-500/10'
                                         }`}
                                       />
-                                      <span className="flex min-w-0 flex-1 flex-col items-start">
-                                        <span className="truncate font-medium">
+                                      <span className="flex min-w-0 flex-1 flex-col">
+                                        <span className="truncate font-semibold text-slate-900">
                                           {profile.label}
                                         </span>
-                                        <span className="font-mono text-[10px] text-muted-foreground">
-                                          {profile.accountId} ·{' '}
-                                          {profile.connectionLabel}
+                                        <span className="font-mono text-[11px] text-slate-500">
+                                          {profile.accountId}
                                         </span>
                                       </span>
-                                      {profile.id === selectedProfileId ? (
-                                        <Check className="size-4 shrink-0 text-primary" />
+                                    </button>
+                                    <div className="absolute right-2 top-2 flex items-center gap-0.5">
+                                      {selected ? (
+                                        <span
+                                          className="flex size-7 items-center justify-center text-primary"
+                                          aria-label="当前选中"
+                                        >
+                                          <Check className="size-4" />
+                                        </span>
                                       ) : null}
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => openLabelEditor(profile)}
-                                      className="flex size-8 shrink-0 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-white hover:text-primary hover:shadow-sm"
-                                      aria-label={`编辑 ${profile.label} 的备注`}
-                                    >
-                                      <Pencil className="size-3.5" />
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => openProfileDelete(profile)}
-                                      className="mr-1.5 flex size-8 shrink-0 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600"
-                                      aria-label={`删除 ${profile.label}`}
-                                    >
-                                      <Trash2 className="size-3.5" />
-                                    </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => openLabelEditor(profile)}
+                                        className="flex size-7 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-white hover:text-primary hover:shadow-sm"
+                                        aria-label={`编辑 ${profile.label} 的备注`}
+                                      >
+                                        <Pencil className="size-3.5" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          openProfileDelete(profile)
+                                        }
+                                        className="flex size-7 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600"
+                                        aria-label={`删除 ${profile.label}`}
+                                      >
+                                        <Trash2 className="size-3.5" />
+                                      </button>
+                                    </div>
                                   </div>
-                                ))}
-                              </PopoverContent>
-                            </Popover>
+                                );
+                              })}
+                            </div>
                           </section>
 
                           <section className="relative rounded-2xl border border-slate-200 bg-slate-50/55 p-4 sm:p-5">
@@ -1020,8 +941,6 @@ export default function MfaRecoveryPage() {
                                 id="target-account-id"
                                 value={form.accountId}
                                 onChange={(event) => {
-                                  setEmailOtp('');
-                                  setEmailUpdateState('idle');
                                   updateField(
                                     'accountId',
                                     event.target.value
@@ -1034,55 +953,6 @@ export default function MfaRecoveryPage() {
                                 autoComplete="off"
                                 className="h-16 rounded-xl border-slate-200 bg-white pl-10 pr-3.5 font-mono text-base tracking-[0.1em] shadow-sm transition-all hover:border-slate-300 focus-visible:shadow-md"
                               />
-                            </div>
-                            <div className="mt-4 border-t border-slate-200 pt-4">
-                              <div className="flex items-center justify-between gap-4">
-                                <div className="flex items-center gap-2.5">
-                                  <MailCheck className="size-4 text-slate-500" />
-                                  <label
-                                    htmlFor="change-root-email"
-                                    className="text-sm font-medium text-slate-800"
-                                  >
-                                    更换根邮箱
-                                  </label>
-                                  <Badge
-                                    variant="outline"
-                                    className="text-[10px]"
-                                  >
-                                    可选
-                                  </Badge>
-                                </div>
-                                <Switch
-                                  id="change-root-email"
-                                  checked={emailChangeEnabled}
-                                  onCheckedChange={(checked) => {
-                                    setEmailChangeEnabled(checked);
-                                    setEmailOtp('');
-                                    setEmailUpdateState('idle');
-                                    if (!checked) setNewRootEmail('');
-                                  }}
-                                />
-                              </div>
-                              {emailChangeEnabled ? (
-                                <div className="relative mt-3 animate-in fade-in slide-in-from-top-1 duration-200">
-                                  <MailCheck className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
-                                  <Input
-                                    value={newRootEmail}
-                                    onChange={(event) => {
-                                      setNewRootEmail(
-                                        event.target.value.slice(0, 64),
-                                      );
-                                      setEmailOtp('');
-                                      setEmailUpdateState('idle');
-                                    }}
-                                    type="email"
-                                    placeholder="新根邮箱"
-                                    autoComplete="off"
-                                    spellCheck={false}
-                                    className="h-11 rounded-xl bg-white pl-10 shadow-sm"
-                                  />
-                                </div>
-                              ) : null}
                             </div>
                           </section>
                         </div>
@@ -1164,115 +1034,22 @@ export default function MfaRecoveryPage() {
                 passed={preflight.rootAccess.rootSessionsEnabled}
               />
               {rootReady ? (
-                emailChangeEnabled ? (
-                  <section className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm animate-in fade-in slide-in-from-bottom-2 duration-300">
-                    <div className="flex items-center gap-3 border-b border-slate-200 bg-slate-50/80 px-4 py-3.5">
-                      <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-amber-300">
-                        <MailCheck className="size-4.5" />
-                      </span>
-                      <div className="min-w-0">
-                        <p className="font-semibold text-slate-950">
-                          更换根邮箱
-                        </p>
-                        <p className="truncate text-xs text-slate-500">
-                          {newRootEmail}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="p-4 sm:p-5">
-                      {emailUpdateState === 'idle' ? (
-                        <PageActions
-                          back={goBack}
-                          primaryLabel="发送验证码"
-                          onPrimary={sendEmailCode}
-                          disabled={!validRootEmail}
-                          busy={busy}
-                          primaryIcon={<MailCheck />}
-                        />
-                      ) : null}
-
-                      {emailUpdateState === 'code-sent' ? (
-                        <div className="animate-in fade-in duration-200">
-                          <label
-                            htmlFor="root-email-otp"
-                            className="mb-3 block text-sm font-medium text-slate-800"
-                          >
-                            邮箱验证码
-                          </label>
-                          <InputOTP
-                            id="root-email-otp"
-                            maxLength={6}
-                            value={emailOtp}
-                            onChange={(value) =>
-                              setEmailOtp(value.replace(/[^A-Za-z0-9]/g, ''))
-                            }
-                            onComplete={() => {
-                              if (!busy) void confirmEmailUpdate();
-                            }}
-                            containerClassName="w-full"
-                          >
-                            <InputOTPGroup className="grid w-full grid-cols-6 gap-2">
-                              {Array.from({ length: 6 }, (_, index) => (
-                                <InputOTPSlot
-                                  key={index}
-                                  index={index}
-                                  className="h-12 w-full rounded-xl border bg-slate-50 font-mono text-lg uppercase first:rounded-xl first:border last:rounded-xl"
-                                />
-                              ))}
-                            </InputOTPGroup>
-                          </InputOTP>
-                          <div className="mt-5 flex items-center justify-between gap-3 border-t pt-4">
-                            <Button
-                              variant="ghost"
-                              onClick={sendEmailCode}
-                              disabled={busy}
-                            >
-                              <RefreshCw /> 重新发送
-                            </Button>
-                            <Button
-                              onClick={confirmEmailUpdate}
-                              disabled={emailOtp.length !== 6 || busy}
-                              className="h-10 min-w-36"
-                            >
-                              {busy ? (
-                                <LoaderCircle className="animate-spin" />
-                              ) : (
-                                <Check />
-                              )}
-                              {busy ? '正在验证…' : '确认更换'}
-                            </Button>
-                          </div>
-                        </div>
-                      ) : null}
-
-                      {emailUpdateState === 'completed' ? (
-                        <StatusRow
-                          label="根邮箱"
-                          detail={newRootEmail}
-                          passed
-                        />
-                      ) : null}
-                    </div>
-                  </section>
-                ) : (
-                  <div className="mt-4 flex items-center gap-3 rounded-2xl border border-primary/15 bg-primary/5 p-4 animate-in fade-in duration-300">
-                    <span className="flex size-10 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-                      <LoaderCircle className="size-5 animate-spin" />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="font-medium">正在扫描根凭证</p>
-                    </div>
-                    {!busy && error ? (
-                      <Button
-                        variant="outline"
-                        onClick={() => scanRootCredentials()}
-                      >
-                        <RefreshCw /> 重试
-                      </Button>
-                    ) : null}
+                <div className="mt-4 flex items-center gap-3 rounded-2xl border border-primary/15 bg-primary/5 p-4 animate-in fade-in duration-300">
+                  <span className="flex size-10 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+                    <LoaderCircle className="size-5 animate-spin" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium">正在扫描根凭证</p>
                   </div>
-                )
+                  {!busy && error ? (
+                    <Button
+                      variant="outline"
+                      onClick={() => scanRootCredentials()}
+                    >
+                      <RefreshCw /> 重试
+                    </Button>
+                  ) : null}
+                </div>
               ) : (
                 <PageActions
                   back={goBack}
