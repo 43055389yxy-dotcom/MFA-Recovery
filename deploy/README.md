@@ -8,7 +8,7 @@ AK/SK credentials; it uses the host role to request temporary cross-account
 sessions.
 
 Attach this statement to the EC2 instance role (or the ECS task/Lambda
-execution role) in operator account `590184009438`:
+execution role) in operator account `075550799913`:
 
 ```json
 {
@@ -19,7 +19,7 @@ execution role) in operator account `590184009438`:
 ```
 
 Customer onboarding creates `MfaRecoveryTargetRole` in the customer's AWS
-Organizations management account and trusts operator account `590184009438`.
+Organizations management account and trusts operator account `075550799913`.
 Only the minimum MFA recovery permissions are attached to that role.
 
 Copy `.env.production.example` to `.env.production`, then run:
