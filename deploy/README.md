@@ -20,6 +20,8 @@ execution role) in operator account `075550799913`:
 
 Customer onboarding creates `MfaRecoveryTargetRole` in the customer's AWS
 Organizations management account and trusts operator account `075550799913`.
+During the migration window it also preserves trust for legacy operator account
+`590184009438`, so traffic can be rolled back without re-running onboarding.
 Only the minimum MFA recovery permissions are attached to that role.
 
 Copy `.env.production.example` to `.env.production`, then run:
