@@ -1,4 +1,4 @@
-mfa-recovery.tontiancloud.com {
+mfa-recovery.tontianit.com {
     import tool_auth mfa_converter
     encode zstd gzip
 
