@@ -21,7 +21,8 @@ RUN apt-get update \
   && unzip -q /tmp/awscliv2.zip -d /tmp \
   && /tmp/aws/install \
   && rm -rf /var/lib/apt/lists/* /tmp/aws /tmp/awscliv2.zip
-COPY --from=build /app ./
+COPY --from=build --chown=node:node /app ./
+USER node
 EXPOSE 3000 3198
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD ["node", "-e", "Promise.all([fetch('http://127.0.0.1:3000/mfa-recovery'),fetch('http://127.0.0.1:3198/healthz')]).then(rs=>process.exit(rs.every(r=>r.ok)?0:1)).catch(()=>process.exit(1))"]

@@ -6,6 +6,10 @@ services:
     image: mfa-recovery:latest
     container_name: mfa-recovery
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     env_file:
       - .env.production
     environment:
